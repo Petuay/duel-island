@@ -34,6 +34,19 @@ const BACKS = [
 ];
 let selfBack = 'none';
 
+// ---------- Special cards (dealt one per round) ----------
+const CARDS = [
+  { id: 'gobig', emoji: '🐘', name: 'Go Big', desc: 'ขยายร่าง +70% โดนง่ายขึ้น แต่กระสุนก็ใหญ่ขึ้น (ลุ้น 10% ใหญ่ 200%)' },
+  { id: 'gosmall', emoji: '🐜', name: 'Go Small', desc: 'ย่อร่างเล็กลง โดนยากขึ้น (ลุ้น 10% เล็กสุด ๆ)' },
+  { id: 'divine', emoji: '😇', name: 'The Divine', desc: 'กระสุนแตกเป็นแฉก 30° ยิงออกสองนัด' },
+  { id: 'bounce', emoji: '🎾', name: 'The Bounce', desc: 'กระสุนเด้งได้ 1 ครั้งแบบสุ่ม' },
+  { id: 'thunder', emoji: '⚡', name: 'The Thunder', desc: '50% ปืนขัดข้อง / 50% ปล่อยสายฟ้ารอบตัว 1 บล็อก' }
+];
+const cardById = id => CARDS.find(c => c.id === id) || null;
+let roster = [];        // alive players this round (for the card target picker)
+let myCard = null;      // the card I was dealt this round
+let myCardTarget = null; // whom I aimed my card at
+
 // mirrors server.js timing constants for the sequential fire animation
 const SHOT_START_DELAY = 4200;
 const SHOT_INTERVAL = 1300;
@@ -547,26 +560,53 @@ function spawnMuzzleFlash(entry) {
   fxSprites.push({ sprite, life: 0, duration: 0.18 });
 }
 
-// a round bullet that flies from the shooter toward endPos at BULLET_SPEED
-function spawnBullet(shooterEntry, endPos, color) {
-  const start = new THREE.Vector3(shooterEntry.x, 0.55, shooterEntry.z);
-  const dist = Math.max(0.1, Math.hypot(endPos.x - start.x, endPos.z - start.z));
-  const duration = dist / BULLET_SPEED; // seconds
-  const geo = new THREE.SphereGeometry(0.12, 12, 12); // ~= the old laser beam thickness
+const THUNDER_RADIUS_C = 1.6; // mirrors server THUNDER_RADIUS
+
+// an additive glow flash (muzzle / lightning / spark), fades and grows
+function spawnFlash(x, y, z, baseScale, color, duration) {
+  const mat = new THREE.SpriteMaterial({
+    map: getFlareTexture(), color: color || 0xffffff, transparent: true, opacity: 1,
+    depthWrite: false, blending: THREE.AdditiveBlending
+  });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.set(x, y, z);
+  sprite.scale.setScalar(baseScale);
+  scene.add(sprite);
+  fxSprites.push({ sprite, life: 0, duration: duration || 0.4, baseScale });
+}
+
+// a round bullet that travels along a poly-line path (multiple segments = a bounce),
+// killing any victim tagged on a segment endpoint as it passes.
+function spawnSegmentBullet(color, segments, radius) {
+  if (!segments || !segments.length) return;
+  const pts = [new THREE.Vector3(segments[0].x1, 0.55, segments[0].z1)];
+  const hitAt = [null];
+  segments.forEach(sg => { pts.push(new THREE.Vector3(sg.x2, 0.55, sg.z2)); hitAt.push(sg.hitId || null); });
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
+  const geo = new THREE.SphereGeometry(radius, 12, 12);
   const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.98 });
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.copy(start);
+  mesh.position.copy(pts[0]);
   scene.add(mesh);
-  // faint glow sprite riding along with the ball
   const glowMat = new THREE.SpriteMaterial({
     map: getFlareTexture(), color, transparent: true, opacity: 0.7,
     depthWrite: false, blending: THREE.AdditiveBlending
   });
   const glow = new THREE.Sprite(glowMat);
-  glow.scale.setScalar(0.5);
-  glow.position.copy(start);
+  glow.scale.setScalar(radius * 4);
+  glow.position.copy(pts[0]);
   scene.add(glow);
-  fxBullets.push({ mesh, glow, start, end: new THREE.Vector3(endPos.x, 0.55, endPos.z), life: 0, duration });
+  fxBullets.push({ mesh, glow, pts, cum, hitAt, total: cum[cum.length - 1], dist: 0, nextIdx: 1 });
+}
+
+// The Thunder VFX: bright bolt glow at the caster plus sparks across the kill radius
+function spawnLightning(entry) {
+  spawnFlash(entry.x, 1.5, entry.z, 2.4, 0xaad4ff, 0.55);
+  for (let i = 0; i < 9; i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * THUNDER_RADIUS_C;
+    spawnFlash(entry.x + Math.cos(a) * r, 0.4, entry.z + Math.sin(a) * r, 0.6, 0xdff0ff, 0.4);
+  }
 }
 
 function makeBloodDecal() {
@@ -606,7 +646,8 @@ function updateFx(dt) {
     const f = fxSprites[i];
     f.life += dt;
     const t = f.life / f.duration;
-    f.sprite.scale.setScalar(0.8 * (1 + t * 1.5));
+    const base = f.baseScale || 0.8;
+    f.sprite.scale.setScalar(base * (1 + t * 1.5));
     f.sprite.material.opacity = Math.max(0, 1 - t);
     if (t >= 1) { scene.remove(f.sprite); fxSprites.splice(i, 1); }
   }
@@ -619,14 +660,19 @@ function updateFx(dt) {
   }
   for (let i = fxBullets.length - 1; i >= 0; i--) {
     const b = fxBullets[i];
-    b.life += dt;
-    const t = Math.min(1, b.life / b.duration);
-    b.mesh.position.lerpVectors(b.start, b.end, t);
-    b.glow.position.copy(b.mesh.position);
-    if (t >= 1) {
-      scene.remove(b.mesh); scene.remove(b.glow);
-      fxBullets.splice(i, 1);
+    b.dist += BULLET_SPEED * dt;
+    // trigger the kill on any victim tagged at a vertex we've now passed
+    while (b.nextIdx < b.pts.length && b.dist >= b.cum[b.nextIdx]) {
+      if (b.hitAt[b.nextIdx]) killVictim(b.hitAt[b.nextIdx]);
+      b.nextIdx++;
     }
+    if (b.dist >= b.total) { scene.remove(b.mesh); scene.remove(b.glow); fxBullets.splice(i, 1); continue; }
+    let seg = 1;
+    while (seg < b.cum.length && b.cum[seg] < b.dist) seg++;
+    const s0 = b.cum[seg - 1], s1 = b.cum[seg];
+    const tt = s1 > s0 ? (b.dist - s0) / (s1 - s0) : 0;
+    b.mesh.position.lerpVectors(b.pts[seg - 1], b.pts[seg], tt);
+    b.glow.position.copy(b.mesh.position);
   }
   for (let i = fxParticles.length - 1; i >= 0; i--) {
     const p = fxParticles[i];
@@ -781,10 +827,17 @@ socket.on('roundStart', data => {
   clearInterval(orderShuffleTimer);
   roundEndsAt = data.endsAt;
 
+  // fresh card for the round; roster used for the target picker
+  roster = data.roster || [];
+  myCardTarget = null;
+
   if (spectating) {
+    // dead players don't pick cards — keep the side panel hidden during placement
+    $('orderPanel').classList.add('hidden');
     spectateCamTarget.set(0, data.islandSize * 0.85 + 6, data.islandSize * 0.6 + 4);
     $('instructions').textContent = '👻 คุณตกรอบแล้ว กำลังดูผู้เล่นที่เหลือหาที่กำบัง...';
   } else {
+    $('instructions').textContent = 'WASD เดิน • เมาส์เล็งทิศ • คลิกชื่อด้านขวาเพื่อใช้การ์ด • SPACE ยืนยัน';
     // find own color from last roomUpdate players list (fallback)
     selfPos.set((Math.random() - 0.5) * 1, 0, (Math.random() - 0.5) * 1);
     selfAngle = Math.random() * Math.PI * 2;
@@ -795,7 +848,18 @@ socket.on('roundStart', data => {
     selfLaser.material.opacity = 0.5;
     scene.add(selfLaser);
     updateReadyUI();
+    buildCardPicker();
   }
+});
+
+socket.on('yourCard', data => {
+  myCard = data.card;
+  if (placing && !spectating) updateCardHeader();
+});
+
+socket.on('cardTargetSet', data => {
+  myCardTarget = data.targetId;
+  refreshPickHighlight();
 });
 
 // track color for self via roomUpdate
@@ -877,8 +941,57 @@ function clearRevealMeshes() {
   fxSprites.forEach(f => scene.remove(f.sprite)); fxSprites = [];
   fxBeams.forEach(f => scene.remove(f.mesh)); fxBeams = [];
   fxParticles.forEach(f => scene.remove(f.points)); fxParticles = [];
+  fxBullets.forEach(f => { scene.remove(f.mesh); scene.remove(f.glow); }); fxBullets = [];
   revealDecals.forEach(d => scene.remove(d)); revealDecals = [];
   revealActive = false;
+}
+
+// ---------- Card picker (placement phase) ----------
+let cardRowMap = new Map();
+
+function updateCardHeader() {
+  const el = $('cardHeader');
+  const c = cardById(myCard);
+  if (!c) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `<div class="cardEmoji">${c.emoji}</div>
+    <div class="cardName">${c.name}</div>
+    <div class="cardDesc">${c.desc}</div>
+    <div class="cardHint">คลิกชื่อด้านล่างเพื่อเลือกเป้า • ไม่เลือก = สุ่มให้</div>`;
+}
+
+function refreshPickHighlight() {
+  cardRowMap.forEach((li, id) => {
+    const picked = id === myCardTarget;
+    li.classList.toggle('picked', picked);
+    li.querySelector('.pickMark').textContent = picked ? '🎯' : '';
+  });
+}
+
+function buildCardPicker() {
+  const listEl = $('orderList');
+  listEl.innerHTML = '';
+  cardRowMap.clear();
+  clearInterval(orderShuffleTimer);
+  $('orderPanelTitle').textContent = '🃏 การ์ดรอบนี้';
+  updateCardHeader();
+  roster.forEach(pl => {
+    const li = document.createElement('li');
+    li.className = 'orderRow pickRow';
+    li.innerHTML = `<span class="orderDot" style="background:${pl.color}"></span>
+      <span class="orderName">${escapeHtml(pl.name)}${pl.id === selfId ? ' (คุณ)' : ''}</span>
+      <span class="pickMark"></span>`;
+    li.addEventListener('click', () => {
+      if (!placing || selfReady) return;
+      myCardTarget = pl.id;
+      socket.emit('useCard', { targetId: pl.id });
+      refreshPickHighlight();
+    });
+    cardRowMap.set(pl.id, li);
+    listEl.appendChild(li);
+  });
+  refreshPickHighlight();
+  $('orderPanel').classList.remove('hidden');
 }
 
 // ---------- Firing order table ----------
@@ -915,15 +1028,19 @@ function buildOrderTable(data) {
   listEl.innerHTML = '';
   orderRowMap.clear();
   clearInterval(orderShuffleTimer);
+  $('orderPanelTitle').textContent = '🎲 ลำดับการยิง';
+  $('cardHeader').classList.add('hidden');
 
   const trueOrder = data.shots.map(s => s.shooterId); // firing order = shot order
   data.shots.forEach(s => {
     const shooter = data.players.find(p => p.id === s.shooterId);
     if (!shooter) return;
+    const card = cardById(shooter.card);
     const li = document.createElement('li');
     li.className = 'orderRow';
     li.innerHTML = `<span class="orderDot" style="background:${shooter.color}"></span>
       <span class="orderName">${escapeHtml(shooter.name)}</span>
+      <span class="orderCard" title="${card ? card.name : ''}">${card ? card.emoji : ''}</span>
       <span class="orderResult"></span>`;
     orderRowMap.set(s.shooterId, { li, resultEl: li.querySelector('.orderResult') });
   });
@@ -951,6 +1068,13 @@ function buildOrderTable(data) {
   }
 }
 
+function shotResultIcon(shot) {
+  if (shot.type === 'skip' || shot.skipped) return '💀';
+  const hits = (shot.hitIds || []).length;
+  if (shot.type === 'thunder') return shot.jammed ? '⚡🚫' : (hits ? '⚡💥' : '⚡');
+  return hits ? (hits > 1 ? '🎯🎯' : '🎯') : '❌';
+}
+
 function revealOrderRow(shot) {
   const row = orderRowMap.get(shot.shooterId);
   if (!row) return;
@@ -958,7 +1082,7 @@ function revealOrderRow(shot) {
   setTimeout(() => {
     row.li.classList.remove('active');
     row.li.classList.add('done');
-    row.resultEl.textContent = shot.skipped ? '💀' : shot.hit ? '🎯' : '❌';
+    row.resultEl.textContent = shotResultIcon(shot);
   }, 400);
 }
 
@@ -973,35 +1097,25 @@ socket.on('roundResult', data => {
   clearSpectatorMeshes();
 
   data.players.forEach(p => {
+    const size = p.size || 1;
     const mesh = makePlayerMesh(p.color, p.id === selfId, p.hat, p.back);
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = p.angle;
+    mesh.scale.setScalar(size);
     scene.add(mesh);
     const sprite = makeNameSprite(p.name + (p.id === selfId ? ' (คุณ)' : ''), p.color);
-    sprite.position.set(p.x, 1.7, p.z);
+    sprite.position.set(p.x, 1.7 * size + 0.2, p.z);
     scene.add(sprite);
     const entry = {
-      mesh, sprite, id: p.id, x: p.x, z: p.z, angle: p.angle, color: p.color,
-      wasHit: p.wasHit, hitTime: null, bloodSpawned: false
+      mesh, sprite, id: p.id, x: p.x, z: p.z, angle: p.angle, color: p.color, size,
+      wasHit: p.wasHit, dying: false, bloodSpawned: false
     };
     revealMeshes.push(entry);
     revealMeshMap.set(p.id, entry);
   });
 
+  // blood/deaths are now triggered as the travelling bullets (or thunder) actually reach victims
   revealShots = data.shots.map((s, i) => ({ ...s, fireTime: SHOT_START_DELAY + i * SHOT_INTERVAL, triggered: false }));
-  revealShots.forEach(s => {
-    if (s.hit && s.targetId) {
-      const shooterEntry = revealMeshMap.get(s.shooterId);
-      const targetEntry = revealMeshMap.get(s.targetId);
-      if (targetEntry) {
-        // blood lands when the travelling ball actually reaches the target
-        const dist = shooterEntry
-          ? Math.hypot(targetEntry.x - shooterEntry.x, targetEntry.z - shooterEntry.z)
-          : 4;
-        targetEntry.hitTime = s.fireTime + (dist / BULLET_SPEED) * 1000;
-      }
-    }
-  });
 
   buildOrderTable(data);
 
@@ -1044,38 +1158,53 @@ function updateReveal(dt) {
   camera.position.lerp(overviewCamTarget, 0.04);
   camera.lookAt(0, 0, 0);
 
-  revealShots.forEach((s, idx) => {
+  revealShots.forEach(s => {
     if (s.triggered || revealClock < s.fireTime) return;
     s.triggered = true;
     revealOrderRow(s);
-    if (s.skipped) return; // this player was already down before their turn came up
-    const shooterEntry = revealMeshMap.get(s.shooterId);
-    if (!shooterEntry) return;
-    spawnMuzzleFlash(shooterEntry);
-    let endPos = null;
-    if (s.hit && s.targetId) {
-      const targetEntry = revealMeshMap.get(s.targetId);
-      if (targetEntry) endPos = new THREE.Vector3(targetEntry.x, 0.55, targetEntry.z);
-    }
-    if (!endPos) {
-      const dx = Math.sin(shooterEntry.angle), dz = Math.cos(shooterEntry.angle);
-      endPos = new THREE.Vector3(shooterEntry.x + dx * 20, 0.55, shooterEntry.z + dz * 20);
-    }
-    spawnBullet(shooterEntry, endPos, shooterEntry.color);
+    triggerShot(s);
   });
 
   revealMeshes.forEach(entry => {
-    if (entry.wasHit && entry.hitTime != null && revealClock >= entry.hitTime) {
-      if (!entry.bloodSpawned) {
-        entry.bloodSpawned = true;
-        spawnImpact(new THREE.Vector3(entry.x, 0.5, entry.z));
-      }
+    if (entry.dying) {
       entry.mesh.rotation.z = THREE.MathUtils.lerp(entry.mesh.rotation.z, Math.PI / 2, dt * 4);
-      entry.mesh.position.y = THREE.MathUtils.lerp(entry.mesh.position.y, -0.4, dt * 4);
+      entry.mesh.position.y = THREE.MathUtils.lerp(entry.mesh.position.y, -0.4 * entry.size, dt * 4);
     }
   });
 
   updateFx(dt);
+}
+
+// a victim goes down: spatter blood once and start the fall animation
+function killVictim(id) {
+  const entry = revealMeshMap.get(id);
+  if (!entry || entry.dying) return;
+  entry.dying = true;
+  if (!entry.bloodSpawned) {
+    entry.bloodSpawned = true;
+    spawnImpact(new THREE.Vector3(entry.x, 0.5, entry.z));
+  }
+}
+
+function triggerShot(s) {
+  if (s.type === 'skip' || s.skipped) return; // already down before their turn
+  const shooterEntry = revealMeshMap.get(s.shooterId);
+  if (!shooterEntry) return;
+
+  if (s.type === 'thunder') {
+    if (s.jammed) {
+      spawnFlash(shooterEntry.x, 0.7, shooterEntry.z, 0.6, 0xbfe0ff, 0.3); // gun fizzles
+    } else {
+      spawnLightning(shooterEntry);
+      (s.hitIds || []).forEach(id => setTimeout(() => killVictim(id), 220));
+    }
+    return;
+  }
+
+  // normal / forked / bouncing bullets
+  spawnMuzzleFlash(shooterEntry);
+  const bulletR = 0.12 * Math.min(2.2, Math.max(0.6, shooterEntry.size));
+  (s.bullets || []).forEach(b => spawnSegmentBullet(shooterEntry.color, b.segments, bulletR));
 }
 
 // ---------- main loop ----------

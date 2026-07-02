@@ -11,11 +11,36 @@ app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: res => res.setHeader('Cache-Control', 'no-cache')
 }));
 
-const PLACE_DURATION = 20000; // ms to walk & aim each round
+const PLACE_DURATION = 45000; // ms to pick a card, walk & aim each round
 const NEXT_ROUND_DELAY = 3000; // pause after reveal before next round starts
-const HIT_WIDTH = 0.3; // perpendicular tolerance of the laser "beam"
+const HIT_WIDTH = 0.3; // base perpendicular tolerance of a shot
 const MIN_ISLAND_SIZE = 6;
 const SHRINK_FACTOR = 0.8;
+
+// ---- Special cards (dealt one per player each round) ----
+const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder'];
+const FORK_ANGLE = 0.2618; // 15deg -> two bullets 30deg apart (The Divine)
+const THUNDER_RADIUS = 1.6; // ~1 block kill radius (The Thunder)
+// size multipliers for Go Big / Go Small (10% chance of the extreme version)
+function goBigScale() { return Math.random() < 0.1 ? 3.0 : 1.7; }
+function goSmallScale() { return Math.random() < 0.1 ? 0.3 : 0.55; }
+// effective perpendicular hit tolerance, widened by a big target / big bullet
+function effHitWidth(shooterSize, targetSize) {
+  return Math.max(0.05, HIT_WIDTH + (targetSize - 1) * 0.4 + (shooterSize - 1) * 0.15);
+}
+// distance along a ray (ox,oz)+t(dx,dz) until it leaves the square field of half-size `half`
+function rayExit(ox, oz, dx, dz, half) {
+  let t = 40;
+  if (dx > 1e-6) t = Math.min(t, (half - ox) / dx);
+  else if (dx < -1e-6) t = Math.min(t, (-half - ox) / dx);
+  if (dz > 1e-6) t = Math.min(t, (half - oz) / dz);
+  else if (dz < -1e-6) t = Math.min(t, (-half - oz) / dz);
+  return Math.max(0.1, t);
+}
+// a random direction that points generally back toward the island centre (for edge bounces)
+function inwardAngle(x, z) {
+  return Math.atan2(-x, -z) + (Math.random() - 0.5) * Math.PI;
+}
 
 const HAT_IDS = ['none', 'party', 'tophat', 'halo', 'horns', 'bunny', 'crown', 'propeller', 'chef'];
 const BACK_IDS = ['none', 'devilwing', 'chickenwing', 'angelwing', 'jetpack', 'cape', 'balloon'];
@@ -135,6 +160,16 @@ class Room {
     }
   }
 
+  setCardTarget(id, targetId) {
+    if (this.state !== 'placing') return;
+    const p = this.players.get(id);
+    const t = this.players.get(targetId);
+    if (!p || !p.alive || p.ready) return;
+    if (!t || !t.alive) return;
+    p.cardTarget = targetId;
+    io.to(id).emit('cardTargetSet', { targetId });
+  }
+
   decideBotMove(bot, half) {
     bot.x = (Math.random() * 2 - 1) * half;
     bot.z = (Math.random() * 2 - 1) * half;
@@ -176,14 +211,20 @@ class Room {
     this.round += 1;
     this.state = 'placing';
     const half = this.islandSize / 2 - 0.6;
+    const aliveList = [...this.players.values()].filter(p => p.alive);
     for (const p of this.players.values()) {
       if (!p.alive) continue;
       p.ready = false;
       p.shotTargetId = null;
+      // deal a fresh random special card each round
+      p.card = CARD_IDS[Math.floor(Math.random() * CARD_IDS.length)];
+      p.cardTarget = null;
       if (p.isBot) {
         // bots decide their final hiding spot right away; nobody can see them move anyway
         this.decideBotMove(p, half);
         p.ready = true;
+        // bots play their card on a random alive player (possibly themselves)
+        p.cardTarget = aliveList[Math.floor(Math.random() * aliveList.length)].id;
       } else {
         // small random jitter around center so overlapping spawns aren't identical
         p.x = (Math.random() - 0.5) * 1.5;
@@ -192,13 +233,19 @@ class Room {
       }
     }
     this.roundEndsAt = Date.now() + PLACE_DURATION;
+    const roster = aliveList.map(p => ({ id: p.id, name: p.name, color: p.color }));
     io.to(this.code).emit('roundStart', {
       round: this.round,
       islandSize: this.islandSize,
       duration: PLACE_DURATION,
       endsAt: this.roundEndsAt,
-      bounds: half
+      bounds: half,
+      roster
     });
+    // privately tell each real player which card they were dealt this round
+    for (const p of aliveList) {
+      if (!p.isBot) io.to(p.id).emit('yourCard', { card: p.card });
+    }
     io.to(this.spectatorRoom).emit('spectateSnapshot', {
       round: this.round,
       players: [...this.players.values()].filter(p => p.alive).map(p => ({
@@ -232,40 +279,101 @@ class Room {
     clearTimeout(this.timer);
 
     const alive = [...this.players.values()].filter(p => p.alive);
+    const aliveMap = new Map(alive.map(p => [p.id, p]));
+    const fieldHalf = this.islandSize / 2;
+
+    // 1. resolve every card (auto-assign a random target if the player never picked one)
+    //    and accumulate the per-player effects it produces.
+    const fx = new Map(); // id -> { size, fork, bounce, thunder }
+    for (const p of alive) fx.set(p.id, { size: 1, fork: false, bounce: false, thunder: false });
+    const cards = []; // who cast what on whom (for the reveal display)
+    for (const caster of alive) {
+      let targetId = caster.cardTarget;
+      if (!targetId || !aliveMap.has(targetId)) {
+        targetId = alive[Math.floor(Math.random() * alive.length)].id;
+      }
+      caster.cardTarget = targetId;
+      const e = fx.get(targetId);
+      switch (caster.card) {
+        case 'gobig': e.size *= goBigScale(); break;
+        case 'gosmall': e.size *= goSmallScale(); break;
+        case 'divine': e.fork = true; break;
+        case 'bounce': e.bounce = true; break;
+        case 'thunder': e.thunder = true; break;
+      }
+      cards.push({ casterId: caster.id, card: caster.card, targetId });
+    }
+
     const firingOrder = shuffle(alive);
     const stillAlive = new Set(alive.map(p => p.id));
     const shots = [];
 
-    for (const shooter of firingOrder) {
-      if (!stillAlive.has(shooter.id)) {
-        // this player was already shot down earlier in the sequence and never gets their turn
-        shots.push({ shooterId: shooter.id, targetId: null, hit: false, skipped: true });
-        continue;
-      }
-      const dx = Math.sin(shooter.angle);
-      const dz = Math.cos(shooter.angle);
-      let closestTarget = null;
-      let closestDist = Infinity;
-
-      for (const target of alive) {
-        if (target.id === shooter.id) continue;
-        if (!stillAlive.has(target.id)) continue; // already down, not standing there anymore
-        const vx = target.x - shooter.x;
-        const vz = target.z - shooter.z;
-        const forwardDist = vx * dx + vz * dz;
-        if (forwardDist <= 0.05) continue; // must be in front
+    // cast one straight segment; returns the first live target hit, or the field-edge exit point
+    const castSegment = (ox, oz, ang, shooterId, excludeIds) => {
+      const dx = Math.sin(ang), dz = Math.cos(ang);
+      let hit = null, hitDist = Infinity;
+      for (const t of alive) {
+        if (t.id === shooterId || !stillAlive.has(t.id) || excludeIds.has(t.id)) continue;
+        const vx = t.x - ox, vz = t.z - oz;
+        const fwd = vx * dx + vz * dz;
+        if (fwd <= 0.05) continue;
         const perp = Math.abs(vx * dz - vz * dx);
-        if (perp <= HIT_WIDTH && forwardDist < closestDist) {
-          closestDist = forwardDist;
-          closestTarget = target;
+        if (perp <= effHitWidth(fx.get(shooterId).size, fx.get(t.id).size) && fwd < hitDist) {
+          hitDist = fwd; hit = t;
         }
       }
-      if (closestTarget) {
-        stillAlive.delete(closestTarget.id);
-        shots.push({ shooterId: shooter.id, targetId: closestTarget.id, hit: true, skipped: false });
-      } else {
-        shots.push({ shooterId: shooter.id, targetId: null, hit: false, skipped: false });
+      const exitDist = rayExit(ox, oz, dx, dz, fieldHalf);
+      if (hit && hitDist <= exitDist) return { hitId: hit.id, x: hit.x, z: hit.z, exited: false };
+      const d = Math.min(exitDist, 40);
+      return { hitId: null, x: ox + dx * d, z: oz + dz * d, exited: exitDist < 40 };
+    };
+
+    for (const shooter of firingOrder) {
+      if (!stillAlive.has(shooter.id)) {
+        shots.push({ shooterId: shooter.id, type: 'skip', skipped: true, hitIds: [] });
+        continue;
       }
+      const e = fx.get(shooter.id);
+
+      // The Thunder replaces the normal directional shot
+      if (e.thunder) {
+        if (Math.random() < 0.5) {
+          shots.push({ shooterId: shooter.id, type: 'thunder', jammed: true, hitIds: [] });
+        } else {
+          const victims = [];
+          for (const t of alive) {
+            if (t.id === shooter.id || !stillAlive.has(t.id)) continue;
+            if (Math.hypot(t.x - shooter.x, t.z - shooter.z) <= THUNDER_RADIUS) victims.push(t.id);
+          }
+          victims.forEach(id => stillAlive.delete(id));
+          shots.push({ shooterId: shooter.id, type: 'thunder', jammed: false, hitIds: victims });
+        }
+        continue;
+      }
+
+      // one or two bullets (The Divine forks into two), each able to bounce once (The Bounce)
+      const angles = e.fork ? [shooter.angle - FORK_ANGLE, shooter.angle + FORK_ANGLE] : [shooter.angle];
+      const shooterHits = new Set();
+      const bullets = [];
+      for (const a0 of angles) {
+        const segments = [];
+        let ox = shooter.x, oz = shooter.z, ang = a0;
+        let bouncesLeft = e.bounce ? 1 : 0;
+        for (let step = 0; step < 3; step++) {
+          const r = castSegment(ox, oz, ang, shooter.id, shooterHits);
+          segments.push({ x1: ox, z1: oz, x2: r.x, z2: r.z, hitId: r.hitId });
+          if (r.hitId) {
+            shooterHits.add(r.hitId);
+            if (bouncesLeft > 0) { bouncesLeft--; ox = r.x; oz = r.z; ang = Math.random() * Math.PI * 2; continue; }
+            break;
+          } else if (r.exited && bouncesLeft > 0) {
+            bouncesLeft--; ox = r.x; oz = r.z; ang = inwardAngle(r.x, r.z); continue;
+          } else break;
+        }
+        bullets.push({ segments });
+      }
+      shooterHits.forEach(id => stillAlive.delete(id));
+      shots.push({ shooterId: shooter.id, type: 'shot', bullets, hitIds: [...shooterHits] });
     }
 
     const eliminated = [];
@@ -286,9 +394,12 @@ class Room {
           id: p.id, name: p.name, color: p.color, hat: p.hat, back: p.back,
           x: p.x, z: p.z, angle: p.angle,
           alive: p.alive,
-          wasHit: eliminated.includes(p.id)
+          wasHit: eliminated.includes(p.id),
+          size: (fx.get(p.id) || {}).size || 1,
+          card: p.card, cardTargetId: p.cardTarget
         })),
       shots,
+      cards,
       eliminated,
       survivors: this.aliveIds()
     };
@@ -417,6 +528,12 @@ io.on('connection', socket => {
     const room = rooms.get(currentRoomCode);
     if (!room) return;
     room.setReady(socket.id);
+  });
+
+  socket.on('useCard', ({ targetId }) => {
+    const room = rooms.get(currentRoomCode);
+    if (!room) return;
+    room.setCardTarget(socket.id, targetId);
   });
 
   socket.on('playAgain', () => {
