@@ -9,12 +9,16 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const PLACE_DURATION = 40000; // ms to walk & aim each round
-const REVEAL_DURATION = 9000; // ms showing the fire animation / results
+const PLACE_DURATION = 20000; // ms to walk & aim each round
 const NEXT_ROUND_DELAY = 4000; // pause after reveal before next round starts
 const HIT_WIDTH = 0.6; // perpendicular tolerance of the laser "beam"
 const MIN_ISLAND_SIZE = 8;
 const SHRINK_FACTOR = 0.8;
+
+// sequential fire animation timing (mirrored client-side in main.js)
+const SHOT_START_DELAY = 1800; // pause to pan the camera out before the first shot
+const SHOT_INTERVAL = 1300; // gap between each player's turn to fire
+const SHOT_END_PAUSE = 3200; // pause after the last shot before advancing
 
 const COLORS = [
   '#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6',
@@ -42,6 +46,15 @@ function genCode() {
 
 function computeIslandSize(playerCount) {
   return Math.min(30, Math.max(12, 10 + Math.ceil(playerCount * 1.6)));
+}
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 class Room {
@@ -76,13 +89,31 @@ class Room {
     const color = COLORS[this.players.size % COLORS.length];
     this.players.set(id, {
       id, name, color, x: 0, z: 0, angle: 0,
-      alive: true, shotTargetId: null, isBot: true
+      alive: true, ready: false, isBot: true
     });
   }
 
   removeBot(id) {
     const p = this.players.get(id);
     if (p && p.isBot) this.players.delete(id);
+  }
+
+  broadcastReady() {
+    const alive = [...this.players.values()].filter(p => p.alive);
+    const readyCount = alive.filter(p => p.ready).length;
+    io.to(this.code).emit('readyUpdate', { ready: readyCount, total: alive.length });
+  }
+
+  setReady(id) {
+    const p = this.players.get(id);
+    if (!p || !p.alive || this.state !== 'placing' || p.ready) return;
+    p.ready = true;
+    this.broadcastReady();
+    const alive = [...this.players.values()].filter(pl => pl.alive);
+    if (alive.length > 0 && alive.every(pl => pl.ready)) {
+      clearTimeout(this.timer);
+      this.resolveRound();
+    }
   }
 
   decideBotMove(bot, half) {
@@ -125,9 +156,12 @@ class Room {
     const half = this.islandSize / 2 - 0.6;
     for (const p of this.players.values()) {
       if (!p.alive) continue;
+      p.ready = false;
+      p.shotTargetId = null;
       if (p.isBot) {
         // bots decide their final hiding spot right away; nobody can see them move anyway
         this.decideBotMove(p, half);
+        p.ready = true;
       } else {
         // small random jitter around center so overlapping spawns aren't identical
         p.x = (Math.random() - 0.5) * 1.5;
@@ -143,8 +177,14 @@ class Room {
       endsAt: this.roundEndsAt,
       bounds: half
     });
+    this.broadcastReady();
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.resolveRound(), PLACE_DURATION);
+    const alive = [...this.players.values()].filter(p => p.alive);
+    if (alive.length > 0 && alive.every(p => p.ready)) {
+      this.timer = setTimeout(() => this.resolveRound(), 400);
+    } else {
+      this.timer = setTimeout(() => this.resolveRound(), PLACE_DURATION);
+    }
   }
 
   handleMove(id, x, z, angle) {
@@ -162,9 +202,16 @@ class Room {
     clearTimeout(this.timer);
 
     const alive = [...this.players.values()].filter(p => p.alive);
-    const hitBy = new Map(); // targetId -> shooterId
+    const firingOrder = shuffle(alive);
+    const stillAlive = new Set(alive.map(p => p.id));
+    const shots = [];
 
-    for (const shooter of alive) {
+    for (const shooter of firingOrder) {
+      if (!stillAlive.has(shooter.id)) {
+        // this player was already shot down earlier in the sequence and never gets their turn
+        shots.push({ shooterId: shooter.id, targetId: null, hit: false, skipped: true });
+        continue;
+      }
       const dx = Math.sin(shooter.angle);
       const dz = Math.cos(shooter.angle);
       let closestTarget = null;
@@ -172,6 +219,7 @@ class Room {
 
       for (const target of alive) {
         if (target.id === shooter.id) continue;
+        if (!stillAlive.has(target.id)) continue; // already down, not standing there anymore
         const vx = target.x - shooter.x;
         const vz = target.z - shooter.z;
         const forwardDist = vx * dx + vz * dz;
@@ -183,16 +231,16 @@ class Room {
         }
       }
       if (closestTarget) {
-        shooter.shotTargetId = closestTarget.id;
-        hitBy.set(closestTarget.id, shooter.id);
+        stillAlive.delete(closestTarget.id);
+        shots.push({ shooterId: shooter.id, targetId: closestTarget.id, hit: true, skipped: false });
       } else {
-        shooter.shotTargetId = null;
+        shots.push({ shooterId: shooter.id, targetId: null, hit: false, skipped: false });
       }
     }
 
     const eliminated = [];
     for (const p of alive) {
-      if (hitBy.has(p.id)) {
+      if (!stillAlive.has(p.id)) {
         p.alive = false;
         eliminated.push(p.id);
       }
@@ -206,15 +254,17 @@ class Room {
         .map(p => ({
           id: p.id, name: p.name, color: p.color,
           x: p.x, z: p.z, angle: p.angle,
-          alive: p.alive, shotTargetId: p.shotTargetId || null,
+          alive: p.alive,
           wasHit: eliminated.includes(p.id)
         })),
+      shots,
       eliminated,
       survivors: this.aliveIds()
     };
     io.to(this.code).emit('roundResult', payload);
 
-    this.timer = setTimeout(() => this.afterReveal(), REVEAL_DURATION);
+    const revealDuration = SHOT_START_DELAY + shots.length * SHOT_INTERVAL + SHOT_END_PAUSE;
+    this.timer = setTimeout(() => this.afterReveal(), revealDuration);
   }
 
   afterReveal() {
@@ -275,7 +325,7 @@ io.on('connection', socket => {
       color,
       x: 0, z: 0, angle: 0,
       alive: true,
-      shotTargetId: null
+      ready: false
     });
     socket.emit('joined', { code: room.code, selfId: socket.id });
     room.broadcastRoom();
@@ -307,6 +357,12 @@ io.on('connection', socket => {
     const room = rooms.get(currentRoomCode);
     if (!room) return;
     room.handleMove(socket.id, x, z, angle);
+  });
+
+  socket.on('ready', () => {
+    const room = rooms.get(currentRoomCode);
+    if (!room) return;
+    room.setReady(socket.id);
   });
 
   socket.on('playAgain', () => {

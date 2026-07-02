@@ -8,6 +8,11 @@ let isHost = false;
 let currentIslandSize = 16;
 let currentRound = 1;
 
+// mirrors server.js timing constants for the sequential fire animation
+const SHOT_START_DELAY = 1800;
+const SHOT_INTERVAL = 1300;
+const BULLET_TRAVEL_MS = 250;
+
 const $ = id => document.getElementById(id);
 
 const homeScreen = $('homeScreen');
@@ -205,6 +210,7 @@ function makePlayerMesh(color, isSelf) {
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.02;
     group.add(ring);
+    group.userData.ring = ring;
   }
   return group;
 }
@@ -244,6 +250,142 @@ function makeLaser(color) {
   return new THREE.Mesh(geo, mat);
 }
 
+// ---------- Muzzle flash / bullet / blood FX ----------
+let flareTextureCache = null;
+function getFlareTexture() {
+  if (flareTextureCache) return flareTextureCache;
+  const cvs = document.createElement('canvas');
+  cvs.width = 64; cvs.height = 64;
+  const ctx = cvs.getContext('2d');
+  const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.4, 'rgba(255,220,120,0.9)');
+  grad.addColorStop(1, 'rgba(255,180,60,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 64, 64);
+  flareTextureCache = new THREE.CanvasTexture(cvs);
+  return flareTextureCache;
+}
+
+let bloodTextureCache = null;
+function getBloodTexture() {
+  if (bloodTextureCache) return bloodTextureCache;
+  const cvs = document.createElement('canvas');
+  cvs.width = 128; cvs.height = 128;
+  const ctx = cvs.getContext('2d');
+  ctx.clearRect(0, 0, 128, 128);
+  ctx.fillStyle = 'rgba(150,10,10,0.88)';
+  for (let i = 0; i < 10; i++) {
+    const cx = 64 + (Math.random() - 0.5) * 70;
+    const cy = 64 + (Math.random() - 0.5) * 70;
+    const r = 8 + Math.random() * 20;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(90,0,0,0.9)';
+  ctx.beginPath(); ctx.arc(64, 64, 16, 0, Math.PI * 2); ctx.fill();
+  bloodTextureCache = new THREE.CanvasTexture(cvs);
+  return bloodTextureCache;
+}
+
+let fxSprites = [], fxBeams = [], fxParticles = [], revealDecals = [];
+
+function spawnMuzzleFlash(entry) {
+  const dx = Math.sin(entry.angle), dz = Math.cos(entry.angle);
+  const mat = new THREE.SpriteMaterial({
+    map: getFlareTexture(), transparent: true, opacity: 1,
+    depthWrite: false, blending: THREE.AdditiveBlending
+  });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.set(entry.x + dx * 0.6, 0.55, entry.z + dz * 0.6);
+  sprite.scale.set(0.8, 0.8, 0.8);
+  scene.add(sprite);
+  fxSprites.push({ sprite, life: 0, duration: 0.18 });
+}
+
+function spawnBulletBeam(shooterEntry, endPos, color) {
+  const start = new THREE.Vector3(shooterEntry.x, 0.55, shooterEntry.z);
+  const dx = endPos.x - start.x, dz = endPos.z - start.z;
+  const dist = Math.max(0.1, Math.hypot(dx, dz));
+  const angle = Math.atan2(dx, dz);
+  const beam = makeLaser(color);
+  beam.material.transparent = true;
+  beam.material.opacity = 0.95;
+  beam.material.blending = THREE.AdditiveBlending;
+  beam.position.copy(start);
+  beam.rotation.y = angle;
+  beam.scale.z = dist;
+  scene.add(beam);
+  fxBeams.push({ mesh: beam, life: 0, duration: 0.45 });
+}
+
+function makeBloodDecal() {
+  const geo = new THREE.PlaneGeometry(1.1 + Math.random() * 0.7, 1.1 + Math.random() * 0.7);
+  const mat = new THREE.MeshBasicMaterial({ map: getBloodTexture(), transparent: true, depthWrite: false });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.rotation.z = Math.random() * Math.PI * 2;
+  return mesh;
+}
+
+function spawnImpact(pos) {
+  const count = 14;
+  const positions = new Float32Array(count * 3);
+  const velocities = [];
+  for (let i = 0; i < count; i++) {
+    positions[i * 3] = pos.x; positions[i * 3 + 1] = pos.y; positions[i * 3 + 2] = pos.z;
+    const theta = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * 2.5;
+    velocities.push(new THREE.Vector3(Math.cos(theta) * speed, 2 + Math.random() * 2, Math.sin(theta) * speed));
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xdd1e1e, size: 0.15, transparent: true, opacity: 1 });
+  const points = new THREE.Points(geo, mat);
+  scene.add(points);
+  fxParticles.push({ points, velocities, life: 0, duration: 0.7 });
+
+  const decal = makeBloodDecal();
+  decal.position.set(pos.x, 0.015, pos.z);
+  scene.add(decal);
+  revealDecals.push(decal);
+}
+
+function updateFx(dt) {
+  for (let i = fxSprites.length - 1; i >= 0; i--) {
+    const f = fxSprites[i];
+    f.life += dt;
+    const t = f.life / f.duration;
+    f.sprite.scale.setScalar(0.8 * (1 + t * 1.5));
+    f.sprite.material.opacity = Math.max(0, 1 - t);
+    if (t >= 1) { scene.remove(f.sprite); fxSprites.splice(i, 1); }
+  }
+  for (let i = fxBeams.length - 1; i >= 0; i--) {
+    const b = fxBeams[i];
+    b.life += dt;
+    const t = b.life / b.duration;
+    b.mesh.material.opacity = Math.max(0, 0.95 * (1 - t));
+    if (t >= 1) { scene.remove(b.mesh); fxBeams.splice(i, 1); }
+  }
+  for (let i = fxParticles.length - 1; i >= 0; i--) {
+    const p = fxParticles[i];
+    p.life += dt;
+    const t = p.life / p.duration;
+    const posAttr = p.points.geometry.attributes.position;
+    for (let j = 0; j < p.velocities.length; j++) {
+      const v = p.velocities[j];
+      posAttr.array[j * 3] += v.x * dt;
+      posAttr.array[j * 3 + 1] += v.y * dt;
+      posAttr.array[j * 3 + 2] += v.z * dt;
+      v.y -= 9 * dt;
+    }
+    posAttr.needsUpdate = true;
+    p.points.material.opacity = Math.max(0, 1 - t);
+    if (t >= 1) { scene.remove(p.points); fxParticles.splice(i, 1); }
+  }
+}
+
 // ---------- Placement phase state ----------
 let selfMesh = null;
 let selfLaser = null;
@@ -262,6 +404,39 @@ function setKey(k, val) {
   if (key === 's' || key === 'arrowdown') keys.s = val;
   if (key === 'a' || key === 'arrowleft') keys.a = val;
   if (key === 'd' || key === 'arrowright') keys.d = val;
+}
+
+let selfReady = false;
+let readyCount = 0;
+let readyTotal = 0;
+window.addEventListener('keydown', e => {
+  if ((e.code === 'Space' || e.key === ' ') && placing) {
+    e.preventDefault();
+    if (!selfReady) {
+      selfReady = true;
+      socket.emit('ready');
+      updateReadyUI();
+    }
+  }
+});
+
+socket.on('readyUpdate', ({ ready, total }) => {
+  readyCount = ready;
+  readyTotal = total;
+  updateReadyUI();
+});
+
+function updateReadyUI() {
+  if (!placing) return;
+  const inst = $('instructions');
+  if (selfReady) {
+    inst.textContent = `✅ พร้อมแล้ว! รอเพื่อน... (${readyCount}/${readyTotal})`;
+  } else {
+    inst.textContent = `WASD เดิน • เมาส์หมุนทิศเลเซอร์ • กด SPACE ยืนยันพร้อมยิง (${readyCount}/${readyTotal})`;
+  }
+  if (selfMesh && selfMesh.userData.ring) {
+    selfMesh.userData.ring.material.color.set(selfReady ? 0x6dff8a : 0xffffff);
+  }
 }
 window.addEventListener('mousemove', e => {
   mouseNdc.x = (e.clientX / window.innerWidth) * 2 - 1;
@@ -294,10 +469,14 @@ socket.on('roundStart', data => {
   scene.add(selfLaser);
 
   placing = true;
+  selfReady = false;
+  readyCount = 0;
+  readyTotal = 0;
   showScreen('game');
   $('banner').classList.add('hidden');
   $('eliminatedList').classList.add('hidden');
   roundEndsAt = data.endsAt;
+  updateReadyUI();
 });
 
 // track color for self via roomUpdate
@@ -356,12 +535,13 @@ function updatePlacement(dt) {
   const secs = Math.ceil(remain / 1000);
   const tEl = $('timerValue');
   tEl.textContent = secs;
-  tEl.classList.toggle('warn', secs <= 10);
+  tEl.classList.toggle('warn', secs <= 6);
 }
 
 // ---------- Reveal phase ----------
-let revealMeshes = []; // {mesh, sprite, laser}
-let revealBeams = [];
+let revealMeshes = []; // {mesh, sprite, id, x, z, angle, color, wasHit, hitTime, bloodSpawned}
+let revealMeshMap = new Map();
+let revealShots = [];
 let revealClock = 0;
 let revealActive = false;
 
@@ -371,8 +551,12 @@ function clearRevealMeshes() {
     scene.remove(r.sprite);
   });
   revealMeshes = [];
-  revealBeams.forEach(b => scene.remove(b.mesh));
-  revealBeams = [];
+  revealMeshMap = new Map();
+  revealShots = [];
+  fxSprites.forEach(f => scene.remove(f.sprite)); fxSprites = [];
+  fxBeams.forEach(f => scene.remove(f.mesh)); fxBeams = [];
+  fxParticles.forEach(f => scene.remove(f.points)); fxParticles = [];
+  revealDecals.forEach(d => scene.remove(d)); revealDecals = [];
   revealActive = false;
 }
 
@@ -390,18 +574,19 @@ socket.on('roundResult', data => {
     const sprite = makeNameSprite(p.name + (p.id === selfId ? ' (คุณ)' : ''), p.color);
     sprite.position.set(p.x, 1.7, p.z);
     scene.add(sprite);
-    revealMeshes.push({ mesh, sprite, id: p.id, wasHit: p.wasHit, alive: p.alive });
+    const entry = {
+      mesh, sprite, id: p.id, x: p.x, z: p.z, angle: p.angle, color: p.color,
+      wasHit: p.wasHit, hitTime: null, bloodSpawned: false
+    };
+    revealMeshes.push(entry);
+    revealMeshMap.set(p.id, entry);
+  });
 
-    if (p.shotTargetId) {
-      const target = data.players.find(t => t.id === p.shotTargetId);
-      const dist = target ? Math.hypot(target.x - p.x, target.z - p.z) : 3;
-      const beam = makeLaser(p.color);
-      beam.material.opacity = 0;
-      beam.position.set(p.x, 0.55, p.z);
-      beam.rotation.y = p.angle;
-      beam.scale.z = dist;
-      scene.add(beam);
-      revealBeams.push({ mesh: beam, delay: 400 + Math.random() * 300, fired: false, maxScale: dist });
+  revealShots = data.shots.map((s, i) => ({ ...s, fireTime: SHOT_START_DELAY + i * SHOT_INTERVAL, triggered: false }));
+  revealShots.forEach(s => {
+    if (s.hit && s.targetId) {
+      const targetEntry = revealMeshMap.get(s.targetId);
+      if (targetEntry) targetEntry.hitTime = s.fireTime + BULLET_TRAVEL_MS;
     }
   });
 
@@ -412,6 +597,7 @@ socket.on('roundResult', data => {
   revealClock = 0;
   revealActive = true;
 
+  const bannerDelay = SHOT_START_DELAY + data.shots.length * SHOT_INTERVAL + 900;
   setTimeout(() => {
     const names = data.eliminated.map(id => {
       const pl = data.players.find(p => p.id === id);
@@ -421,14 +607,13 @@ socket.on('roundResult', data => {
     const elimEl = $('eliminatedList');
     if (names.length) {
       banner.textContent = `💥 ตกรอบ: ${names.join(', ')}`;
-      elimEl.textContent = data.survivors.length + ' คนยังรอด';
     } else {
       banner.textContent = '😮 ไม่มีใครโดนยิงรอบนี้';
-      elimEl.textContent = data.survivors.length + ' คนยังรอด';
     }
+    elimEl.textContent = data.survivors.length + ' คนยังรอด';
     banner.classList.remove('hidden');
     elimEl.classList.remove('hidden');
-  }, 1400);
+  }, bannerDelay);
 });
 
 socket.on('nextRoundCountdown', () => {
@@ -444,19 +629,37 @@ function updateReveal(dt) {
   camera.position.lerp(overviewCamTarget, 0.04);
   camera.lookAt(0, 0, 0);
 
-  revealBeams.forEach(b => {
-    if (revealClock >= b.delay) {
-      b.fired = true;
-      b.mesh.material.opacity = Math.min(0.9, b.mesh.material.opacity + dt * 6);
+  revealShots.forEach(s => {
+    if (s.triggered || revealClock < s.fireTime) return;
+    s.triggered = true;
+    if (s.skipped) return; // this player was already down before their turn came up
+    const shooterEntry = revealMeshMap.get(s.shooterId);
+    if (!shooterEntry) return;
+    spawnMuzzleFlash(shooterEntry);
+    let endPos = null;
+    if (s.hit && s.targetId) {
+      const targetEntry = revealMeshMap.get(s.targetId);
+      if (targetEntry) endPos = new THREE.Vector3(targetEntry.x, 0.55, targetEntry.z);
+    }
+    if (!endPos) {
+      const dx = Math.sin(shooterEntry.angle), dz = Math.cos(shooterEntry.angle);
+      endPos = new THREE.Vector3(shooterEntry.x + dx * 20, 0.55, shooterEntry.z + dz * 20);
+    }
+    spawnBulletBeam(shooterEntry, endPos, shooterEntry.color);
+  });
+
+  revealMeshes.forEach(entry => {
+    if (entry.wasHit && entry.hitTime != null && revealClock >= entry.hitTime) {
+      if (!entry.bloodSpawned) {
+        entry.bloodSpawned = true;
+        spawnImpact(new THREE.Vector3(entry.x, 0.5, entry.z));
+      }
+      entry.mesh.rotation.z = THREE.MathUtils.lerp(entry.mesh.rotation.z, Math.PI / 2, dt * 4);
+      entry.mesh.position.y = THREE.MathUtils.lerp(entry.mesh.position.y, -0.4, dt * 4);
     }
   });
 
-  revealMeshes.forEach(r => {
-    if (r.wasHit && revealClock > 900) {
-      r.mesh.rotation.z = THREE.MathUtils.lerp(r.mesh.rotation.z, Math.PI / 2, dt * 4);
-      r.mesh.position.y = THREE.MathUtils.lerp(r.mesh.position.y, -0.4, dt * 4);
-    }
-  });
+  updateFx(dt);
 }
 
 // ---------- main loop ----------
