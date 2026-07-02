@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Duel Island - เกาะประลองปืนเงียบ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Mitr:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="gameCanvas" class="hidden"></canvas>
+
+  <!-- HOME SCREEN -->
+  <div id="homeScreen" class="screen">
+    <div class="panel">
+      <h1>🏝️ Duel Island</h1>
+      <div class="subtitle">เดินหาจุดยืน เล็งเงียบๆ แล้วยิงพร้อมกันตอนหมดเวลา</div>
+      <div class="tabs">
+        <button id="tabCreate" class="active">สร้างห้อง</button>
+        <button id="tabJoin">เข้าร่วมห้อง</button>
+      </div>
+      <div id="createForm">
+        <input type="text" id="nameCreate" placeholder="ชื่อของคุณ" maxlength="16">
+        <button id="btnCreate">สร้างห้องใหม่</button>
+      </div>
+      <div id="joinForm" class="hidden">
+        <input type="text" id="roomCodeInput" placeholder="รหัสห้อง เช่น AB12" maxlength="4" style="text-transform:uppercase">
+        <input type="text" id="nameJoin" placeholder="ชื่อของคุณ" maxlength="16">
+        <button id="btnJoin">เข้าร่วม</button>
+      </div>
+      <div class="err" id="homeErr"></div>
+    </div>
+  </div>
+
+  <!-- LOBBY SCREEN -->
+  <div id="lobbyScreen" class="screen hidden">
+    <div class="panel">
+      <h1>ห้องรอผู้เล่น</h1>
+      <div class="roomCode" id="lobbyCode">----</div>
+      <ul id="lobbyPlayers"></ul>
+      <button id="btnAddBot" class="secondary hidden">🤖 เพิ่มบอท</button>
+      <button id="btnStart">เริ่มเกม</button>
+      <div class="err" id="lobbyErr"></div>
+    </div>
+  </div>
+
+  <!-- HUD (during game) -->
+  <div id="hud" class="hidden">
+    <div class="top">
+      <div class="stat"><div class="label">รอบ</div><div class="value" id="roundValue">1</div></div>
+      <div class="stat"><div class="label">เกาะ</div><div class="value" id="islandValue">16</div></div>
+      <div class="stat"><div class="label">เหลือรอด</div><div class="value" id="aliveValue">-</div></div>
+      <div class="stat"><div class="label">เวลา</div><div class="value" id="timerValue">--</div></div>
+    </div>
+    <div class="instructions" id="instructions">WASD เดิน • เมาส์หมุนทิศเลเซอร์ • หาจุดซ่อนแล้วเล็งให้แม่น!</div>
+    <div class="banner hidden" id="banner"></div>
+    <div class="eliminatedList hidden" id="eliminatedList"></div>
+  </div>
+
+  <!-- GAME OVER -->
+  <div id="gameOverPanel" class="screen hidden">
+    <div class="panel">
+      <h1 id="gameOverTitle">จบเกม</h1>
+      <div class="subtitle" id="gameOverSubtitle"></div>
+      <button id="btnPlayAgain">เล่นอีกครั้ง (กลับล็อบบี้)</button>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module" src="main.js"></script>
+</body>
+</html>
