@@ -12,8 +12,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 const PLACE_DURATION = 20000; // ms to walk & aim each round
 const NEXT_ROUND_DELAY = 4000; // pause after reveal before next round starts
 const HIT_WIDTH = 0.6; // perpendicular tolerance of the laser "beam"
-const MIN_ISLAND_SIZE = 8;
+const MIN_ISLAND_SIZE = 6;
 const SHRINK_FACTOR = 0.8;
+
+const HAT_IDS = ['none', 'party', 'tophat', 'halo', 'horns', 'bunny', 'crown', 'propeller', 'chef'];
 
 // sequential fire animation timing (mirrored client-side in main.js)
 const SHOT_START_DELAY = 1800; // pause to pan the camera out before the first shot
@@ -45,7 +47,8 @@ function genCode() {
 }
 
 function computeIslandSize(playerCount) {
-  return Math.min(30, Math.max(12, 10 + Math.ceil(playerCount * 1.6)));
+  const base = Math.min(30, Math.max(12, 10 + Math.ceil(playerCount * 1.6)));
+  return Math.max(MIN_ISLAND_SIZE, Math.round(base * 0.75));
 }
 
 function shuffle(arr) {
@@ -64,7 +67,7 @@ class Room {
     this.state = 'lobby'; // lobby | placing | reveal | ended
     this.players = new Map(); // id -> player
     this.round = 0;
-    this.islandSize = 16;
+    this.islandSize = 12;
     this.timer = null;
     this.roundEndsAt = 0;
     this.botCounter = 0;
@@ -72,7 +75,7 @@ class Room {
 
   publicPlayers() {
     return [...this.players.values()].map(p => ({
-      id: p.id, name: p.name, color: p.color, alive: p.alive, isBot: !!p.isBot
+      id: p.id, name: p.name, color: p.color, alive: p.alive, isBot: !!p.isBot, hat: p.hat
     }));
   }
 
@@ -89,7 +92,8 @@ class Room {
     const color = COLORS[this.players.size % COLORS.length];
     this.players.set(id, {
       id, name, color, x: 0, z: 0, angle: 0,
-      alive: true, ready: false, isBot: true
+      alive: true, ready: false, isBot: true,
+      hat: HAT_IDS[1 + Math.floor(Math.random() * (HAT_IDS.length - 1))]
     });
   }
 
@@ -252,7 +256,7 @@ class Room {
       players: [...this.players.values()]
         .filter(p => alive.includes(p) || eliminated.includes(p.id))
         .map(p => ({
-          id: p.id, name: p.name, color: p.color,
+          id: p.id, name: p.name, color: p.color, hat: p.hat,
           x: p.x, z: p.z, angle: p.angle,
           alive: p.alive,
           wasHit: eliminated.includes(p.id)
@@ -325,7 +329,8 @@ io.on('connection', socket => {
       color,
       x: 0, z: 0, angle: 0,
       alive: true,
-      ready: false
+      ready: false,
+      hat: 'none'
     });
     socket.emit('joined', { code: room.code, selfId: socket.id });
     room.broadcastRoom();
@@ -343,6 +348,15 @@ io.on('connection', socket => {
     const room = rooms.get(currentRoomCode);
     if (!room || room.hostId !== socket.id || room.state !== 'lobby') return;
     room.addBot();
+    room.broadcastRoom();
+  });
+
+  socket.on('setHat', ({ hat }) => {
+    const room = rooms.get(currentRoomCode);
+    if (!room || room.state !== 'lobby') return;
+    const p = room.players.get(socket.id);
+    if (!p || !HAT_IDS.includes(hat)) return;
+    p.hat = hat;
     room.broadcastRoom();
   });
 

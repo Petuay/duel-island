@@ -8,12 +8,39 @@ let isHost = false;
 let currentIslandSize = 16;
 let currentRound = 1;
 
+// ---------- Hats ----------
+const HATS = [
+  { id: 'none', emoji: '🚫' },
+  { id: 'party', emoji: '🎉' },
+  { id: 'tophat', emoji: '🎩' },
+  { id: 'halo', emoji: '😇' },
+  { id: 'horns', emoji: '😈' },
+  { id: 'bunny', emoji: '🐰' },
+  { id: 'crown', emoji: '👑' },
+  { id: 'propeller', emoji: '🚁' },
+  { id: 'chef', emoji: '👨‍🍳' }
+];
+let selfHat = 'none';
+
 // mirrors server.js timing constants for the sequential fire animation
 const SHOT_START_DELAY = 1800;
 const SHOT_INTERVAL = 1300;
 const BULLET_TRAVEL_MS = 250;
 
 const $ = id => document.getElementById(id);
+
+const hatPickerEl = $('hatPicker');
+HATS.forEach(h => {
+  const btn = document.createElement('button');
+  btn.className = 'hatBtn';
+  btn.textContent = h.emoji;
+  btn.title = h.id;
+  btn.addEventListener('click', () => socket.emit('setHat', { hat: h.id }));
+  hatPickerEl.appendChild(btn);
+});
+function updateHatPickerUI() {
+  [...hatPickerEl.children].forEach((btn, i) => btn.classList.toggle('active', HATS[i].id === selfHat));
+}
 
 const homeScreen = $('homeScreen');
 const lobbyScreen = $('lobbyScreen');
@@ -65,10 +92,12 @@ socket.on('roomUpdate', data => {
     const list = $('lobbyPlayers');
     list.innerHTML = '';
     data.players.forEach(p => {
+      if (p.id === selfId) { selfHat = p.hat || 'none'; updateHatPickerUI(); }
+      const hatEmoji = (HATS.find(h => h.id === p.hat) || HATS[0]).emoji;
       const li = document.createElement('li');
       const label = document.createElement('span');
       label.innerHTML = `<span class="dot" style="background:${p.color}"></span>
-        <span>${p.isBot ? '🤖 ' : ''}${escapeHtml(p.name)}${p.id === data.hostId ? ' 👑' : ''}${p.id === selfId ? ' (คุณ)' : ''}</span>`;
+        <span>${p.isBot ? '🤖 ' : ''}${p.hat && p.hat !== 'none' ? hatEmoji + ' ' : ''}${escapeHtml(p.name)}${p.id === data.hostId ? ' 👑' : ''}${p.id === selfId ? ' (คุณ)' : ''}</span>`;
       label.style.display = 'flex';
       label.style.alignItems = 'center';
       label.style.gap = '10px';
@@ -183,7 +212,96 @@ function buildIsland(size) {
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
 // ---------- Player visuals ----------
-function makePlayerMesh(color, isSelf) {
+function addHatDecoration(group, hat) {
+  const topY = 0.85 + 0.42; // top of the head cube
+  switch (hat) {
+    case 'party': {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.42, 16), new THREE.MeshStandardMaterial({ color: 0xff5fa2 }));
+      cone.position.y = topY + 0.19;
+      const pom = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffe066 }));
+      pom.position.y = topY + 0.42;
+      group.add(cone, pom);
+      break;
+    }
+    case 'tophat': {
+      const black = new THREE.MeshStandardMaterial({ color: 0x222222 });
+      const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.27, 0.05, 16), black);
+      brim.position.y = topY + 0.02;
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.32, 16), black);
+      top.position.y = topY + 0.2;
+      group.add(brim, top);
+      break;
+    }
+    case 'halo': {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.025, 8, 20),
+        new THREE.MeshStandardMaterial({ color: 0xfff2a8, emissive: 0xffe066, emissiveIntensity: 0.7 }));
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = topY + 0.22;
+      group.add(ring);
+      break;
+    }
+    case 'horns': {
+      const mat = new THREE.MeshStandardMaterial({ color: 0xcc2b2b });
+      const l = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.22, 8), mat);
+      l.position.set(-0.14, topY + 0.06, 0);
+      l.rotation.z = 0.5;
+      const r = l.clone();
+      r.position.x = 0.14;
+      r.rotation.z = -0.5;
+      group.add(l, r);
+      break;
+    }
+    case 'bunny': {
+      const mat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+      const l = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.32, 8), mat);
+      l.position.set(-0.12, topY + 0.16, 0);
+      l.rotation.z = 0.25;
+      const r = l.clone();
+      r.position.x = 0.12;
+      r.rotation.z = -0.25;
+      group.add(l, r);
+      break;
+    }
+    case 'crown': {
+      const gold = new THREE.MeshStandardMaterial({ color: 0xffd23f, metalness: 0.4, roughness: 0.3 });
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.14, 8), gold);
+      band.position.y = topY + 0.08;
+      group.add(band);
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 6), gold);
+        spike.position.set(Math.sin(a) * 0.2, topY + 0.22, Math.cos(a) * 0.2);
+        group.add(spike);
+      }
+      break;
+    }
+    case 'propeller': {
+      const capMat = new THREE.MeshStandardMaterial({ color: 0xff9f43 });
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), capMat);
+      cap.position.y = topY;
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.14, 6), new THREE.MeshStandardMaterial({ color: 0x888888 }));
+      stem.position.y = topY + 0.24;
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.03, 0.06), new THREE.MeshStandardMaterial({ color: 0xff5fa2 }));
+      blade.position.y = topY + 0.3;
+      group.add(cap, stem, blade);
+      break;
+    }
+    case 'chef': {
+      const white = new THREE.MeshStandardMaterial({ color: 0xffffff });
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.12, 12), white);
+      band.position.y = topY + 0.06;
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), white);
+      puff.position.y = topY + 0.28;
+      puff.scale.y = 1.2;
+      group.add(band, puff);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function makePlayerMesh(color, isSelf, hat) {
   const group = new THREE.Group();
   const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.85, 0.4), bodyMat);
@@ -193,6 +311,7 @@ function makePlayerMesh(color, isSelf) {
   head.position.y = 0.85 + 0.21;
   head.castShadow = true;
   group.add(body, head);
+  addHatDecoration(group, hat);
 
   // gun / aim nub on front
   const nub = new THREE.Mesh(
@@ -462,7 +581,7 @@ socket.on('roundStart', data => {
 
   if (selfMesh) scene.remove(selfMesh);
   if (selfLaser) scene.remove(selfLaser);
-  selfMesh = makePlayerMesh(selfColor, true);
+  selfMesh = makePlayerMesh(selfColor, true, selfHat);
   scene.add(selfMesh);
   selfLaser = makeLaser(selfColor);
   selfLaser.material.opacity = 0.5;
@@ -567,7 +686,7 @@ socket.on('roundResult', data => {
   clearRevealMeshes();
 
   data.players.forEach(p => {
-    const mesh = makePlayerMesh(p.color, p.id === selfId);
+    const mesh = makePlayerMesh(p.color, p.id === selfId, p.hat);
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = p.angle;
     scene.add(mesh);
