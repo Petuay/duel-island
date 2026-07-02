@@ -545,7 +545,29 @@ function getBloodTexture() {
   return bloodTextureCache;
 }
 
-let fxSprites = [], fxBeams = [], fxParticles = [], revealDecals = [], fxBullets = [];
+let fxSprites = [], fxBeams = [], fxParticles = [], revealDecals = [], fxBullets = [], fxLabels = [];
+
+// hidden-power icons + a short label that floats up above a player when a power fires
+const POWER_EMOJI = { matrix: '🕶️', drunken: '🥴', revenger: '👻', fool: '🤡', man: '💪' };
+let zoomFocus = null; // { x, z, until } — pulls the reveal camera in on a triggered power
+
+function floatLabel(x, z, y, text, color) {
+  const cvs = document.createElement('canvas');
+  cvs.width = 512; cvs.height = 96;
+  const ctx = cvs.getContext('2d');
+  ctx.font = "bold 54px 'Baloo 2', sans-serif";
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.strokeText(text, 256, 48);
+  ctx.fillStyle = color || '#ffffff';
+  ctx.fillText(text, 256, 48);
+  const mat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cvs), transparent: true, depthWrite: false, depthTest: false });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.set(4.2, 0.8, 1);
+  sp.position.set(x, y, z);
+  scene.add(sp);
+  fxLabels.push({ sp, life: 0, duration: 1.7, baseY: y });
+}
 
 function spawnMuzzleFlash(entry) {
   const dx = Math.sin(entry.angle), dz = Math.cos(entry.angle);
@@ -689,6 +711,14 @@ function updateFx(dt) {
     posAttr.needsUpdate = true;
     p.points.material.opacity = Math.max(0, 1 - t);
     if (t >= 1) { scene.remove(p.points); fxParticles.splice(i, 1); }
+  }
+  for (let i = fxLabels.length - 1; i >= 0; i--) {
+    const l = fxLabels[i];
+    l.life += dt;
+    const t = l.life / l.duration;
+    l.sp.position.y = l.baseY + t * 1.3;
+    l.sp.material.opacity = t < 0.15 ? t / 0.15 : Math.max(0, 1 - (t - 0.15) / 0.85);
+    if (t >= 1) { scene.remove(l.sp); fxLabels.splice(i, 1); }
   }
 }
 
@@ -942,7 +972,9 @@ function clearRevealMeshes() {
   fxBeams.forEach(f => scene.remove(f.mesh)); fxBeams = [];
   fxParticles.forEach(f => scene.remove(f.points)); fxParticles = [];
   fxBullets.forEach(f => { scene.remove(f.mesh); scene.remove(f.glow); }); fxBullets = [];
+  fxLabels.forEach(l => scene.remove(l.sp)); fxLabels = [];
   revealDecals.forEach(d => scene.remove(d)); revealDecals = [];
+  zoomFocus = null;
   revealActive = false;
 }
 
@@ -1150,13 +1182,22 @@ socket.on('nextRoundCountdown', () => {
 });
 
 const overviewCamTarget = new THREE.Vector3(0, 14, 10);
+const zoomCamPos = new THREE.Vector3();
 
 function updateReveal(dt) {
   if (!revealActive) return;
   revealClock += dt * 1000;
 
-  camera.position.lerp(overviewCamTarget, 0.04);
-  camera.lookAt(0, 0, 0);
+  // pull the camera in on a player whose hidden power is firing, else the wide overview
+  if (zoomFocus && revealClock < zoomFocus.until) {
+    zoomCamPos.set(zoomFocus.x, 5.5, zoomFocus.z + 5);
+    camera.position.lerp(zoomCamPos, 0.09);
+    camera.lookAt(zoomFocus.x, 0.6, zoomFocus.z);
+  } else {
+    if (zoomFocus) zoomFocus = null;
+    camera.position.lerp(overviewCamTarget, 0.04);
+    camera.lookAt(0, 0, 0);
+  }
 
   revealShots.forEach(s => {
     if (s.triggered || revealClock < s.fireTime) return;
@@ -1169,10 +1210,50 @@ function updateReveal(dt) {
     if (entry.dying) {
       entry.mesh.rotation.z = THREE.MathUtils.lerp(entry.mesh.rotation.z, Math.PI / 2, dt * 4);
       entry.mesh.position.y = THREE.MathUtils.lerp(entry.mesh.position.y, -0.4 * entry.size, dt * 4);
+    } else if (entry.dodgeUntil && revealClock < entry.dodgeUntil) {
+      entry.mesh.rotation.x = THREE.MathUtils.lerp(entry.mesh.rotation.x, -1.1, dt * 8); // Matrix lean-back
+    } else if (entry.mesh.rotation.x !== 0) {
+      entry.mesh.rotation.x = THREE.MathUtils.lerp(entry.mesh.rotation.x, 0, dt * 6);
     }
   });
 
   updateFx(dt);
+}
+
+function focusOn(entry, ms) {
+  zoomFocus = { x: entry.x, z: entry.z, until: revealClock + ms };
+}
+
+// reveal a triggered hidden power: zoom in + a floating label (+ the Fool's fake-out gag)
+function handlePowerEvents(s) {
+  if (s.drunken) {
+    const e = revealMeshMap.get(s.shooterId);
+    if (e) { focusOn(e, 1400); floatLabel(e.x, e.z, 2.5 * e.size, POWER_EMOJI.drunken + ' เมา!', '#ffd36b'); }
+  }
+  if (s.revenge) {
+    const e = revealMeshMap.get(s.shooterId);
+    if (e) { focusOn(e, 1500); floatLabel(e.x, e.z, 2.3, POWER_EMOJI.revenger + ' REVENGE!', '#c9b3ff'); }
+  }
+  (s.dodges || []).forEach(id => {
+    const e = revealMeshMap.get(id);
+    if (!e) return;
+    focusOn(e, 1500);
+    e.dodgeUntil = revealClock + 800;
+    floatLabel(e.x, e.z, 2.6 * e.size, POWER_EMOJI.matrix + ' MATRIX!', '#9fe0ff');
+  });
+  (s.manDeflects || []).forEach(id => {
+    const e = revealMeshMap.get(id);
+    if (!e) return;
+    focusOn(e, 1400);
+    floatLabel(e.x, e.z, 2.6 * e.size, POWER_EMOJI.man + ' THE MAN!', '#ffcf7a');
+  });
+  (s.foolGags || []).forEach(g => {
+    const e = revealMeshMap.get(g.victimId);
+    if (!e) return;
+    focusOn(e, 1600);
+    floatLabel(e.x, e.z, 2.6 * e.size, (POWER_EMOJI[g.fakedPower] || '❓') + ' ?!', '#ffffff');
+    setTimeout(() => floatLabel(e.x, e.z, 2.9 * e.size, '🤡👋 โดนหลอก!', '#ff8fd0'), 500);
+  });
 }
 
 // a victim goes down: spatter blood once and start the fall animation
@@ -1190,6 +1271,8 @@ function triggerShot(s) {
   if (s.type === 'skip' || s.skipped) return; // already down before their turn
   const shooterEntry = revealMeshMap.get(s.shooterId);
   if (!shooterEntry) return;
+
+  handlePowerEvents(s);
 
   if (s.type === 'thunder') {
     if (s.jammed) {
