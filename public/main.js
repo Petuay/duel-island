@@ -36,11 +36,12 @@ let selfBack = 'none';
 
 // ---------- Special cards (dealt one per round) ----------
 const CARDS = [
-  { id: 'gobig', emoji: '🐘', name: 'Go Big', desc: 'ขยายร่าง +70% โดนง่ายขึ้น แต่กระสุนก็ใหญ่ขึ้น (ลุ้น 10% ใหญ่ 200%)' },
-  { id: 'gosmall', emoji: '🐜', name: 'Go Small', desc: 'ย่อร่างเล็กลง โดนยากขึ้น (ลุ้น 10% เล็กสุด ๆ)' },
-  { id: 'divine', emoji: '😇', name: 'The Divine', desc: 'กระสุนแตกเป็นแฉก 30° ยิงออกสองนัด' },
-  { id: 'bounce', emoji: '🎾', name: 'The Bounce', desc: 'กระสุนเด้งได้ 1 ครั้งแบบสุ่ม' },
-  { id: 'thunder', emoji: '⚡', name: 'The Thunder', desc: '50% ปืนขัดข้อง / 50% ปล่อยสายฟ้ารอบตัว 1 บล็อก' }
+  { id: 'gobig', emoji: '🐘', name: 'เบิ้ม ๆ', desc: 'ขยายร่างเป้า +70% โดนง่ายขึ้น แต่กระสุนก็ใหญ่ขึ้น (ลุ้น 10% ใหญ่ 200%) • ซ้อนกันได้' },
+  { id: 'gosmall', emoji: '🐜', name: 'จิ๋ว ๆ', desc: 'ย่อร่างเป้าเล็กลง โดนยากขึ้น (ลุ้น 10% เล็กสุด ๆ) • ซ้อนกันได้' },
+  { id: 'divine', emoji: '😇', name: 'ลูกซองแฉก', desc: 'กระสุนเป้าแตกเป็นแฉก 30° ยิงออกสองนัด' },
+  { id: 'bounce', emoji: '🎾', name: 'กระสุนเด้ง', desc: 'กระสุนเป้าเด้งได้ 1 ครั้งแบบสุ่ม' },
+  { id: 'thunder', emoji: '⚡', name: 'ฟ้าฝนไม่เป็นใจ', desc: '50% ปืนขัดข้อง / 50% ปล่อยสายฟ้ารอบตัว 1 บล็อก' },
+  { id: 'mirror', emoji: '🪞', name: 'กระจกหกด้าน', desc: 'เป้าได้เกราะหนาม สะท้อนกระสุนกลับไปหาคนยิง' }
 ];
 const cardById = id => CARDS.find(c => c.id === id) || null;
 let roster = [];        // alive players this round (for the card target picker)
@@ -113,6 +114,29 @@ $('btnEndGame').addEventListener('click', () => {
   if (confirm('จบเกมตอนนี้แล้วพาทุกคนกลับไปที่ล็อบบี้?')) socket.emit('endToLobby');
 });
 $('btnAddBot').addEventListener('click', () => socket.emit('addBot'));
+
+// ---------- Reference guide (collapsible list of all cards + powers) ----------
+function buildGuide() {
+  const powerOrder = ['matrix', 'drunken', 'revenger', 'man'];
+  let html = '<div class="guideHead">🃏 การ์ดพลัง (สุ่มทุกตา)</div>';
+  CARDS.forEach(c => {
+    html += `<div class="guideItem"><span class="gEmoji">${c.emoji}</span>
+      <span><b>${c.name}</b> — ${c.desc}</span></div>`;
+  });
+  html += '<div class="guideHead">⚡ พลังแฝง (สุ่มตอนเริ่มเกม ซ่อนไว้)</div>';
+  powerOrder.forEach(pid => {
+    const d = (POWER_DESC[pid] || '').replace(/^[^—]*—\s*/, '');
+    html += `<div class="guideItem"><span class="gEmoji">${POWER_EMOJI[pid]}</span>
+      <span><b>${POWER_DESC[pid].split(' — ')[0]}</b> — ${d}</span></div>`;
+  });
+  $('guidePanel').innerHTML = html;
+}
+// build lazily on first open (CARDS/POWER_DESC are defined further down the file)
+let guideBuilt = false;
+$('btnGuide').addEventListener('click', () => {
+  if (!guideBuilt) { buildGuide(); guideBuilt = true; }
+  $('guidePanel').classList.toggle('hidden');
+});
 
 socket.on('errorMsg', ({ message }) => {
   $('homeErr').textContent = message;
@@ -548,14 +572,15 @@ function getBloodTexture() {
 let fxSprites = [], fxBeams = [], fxParticles = [], revealDecals = [], fxBullets = [], fxLabels = [];
 
 // hidden-power icons + a short label that floats up above a player when a power fires
-const POWER_EMOJI = { matrix: '🕶️', drunken: '🥴', revenger: '👻', fool: '🤡', man: '💪' };
+const POWER_EMOJI = { matrix: '🕶️', drunken: '🥴', revenger: '👻', man: '💪' };
 const POWER_DESC = {
-  matrix: 'The Matrix — หลบกระสุนนัดแรกของเกม',
-  drunken: 'The Drunken — 33% ยิงออกด้านหลัง',
-  revenger: 'The Revenger — ตายแล้วยิงสุ่ม 1 นัด',
-  fool: 'The Fool — ยิงโดนใครปิดพลังคนนั้น',
-  man: 'The MAN — โดนยิงด้านหลังกระเด็นสุ่ม'
+  matrix: 'The Matrix — หลบกระสุนนัดแรกของเกม กระสุนทะลุไปโดนคนข้างหลัง',
+  drunken: 'เมาดิบ — 33% ยิงออกด้านหลังแทน',
+  revenger: 'จิตพยาบาท — ตายแล้วยิงสุ่ม 3 นัด',
+  man: 'แผ่นหลังลูกผู้ชาย — โดนยิงด้านหลังกระเด็นสุ่มทิศ'
 };
+// card ids and short blurbs for the in-game reference sheet
+const CARD_NAMES = CARDS; // reuse; each has {id,emoji,name,desc}
 let zoomFocus = null; // { x, z, until } — pulls the reveal camera in on a triggered power
 let playerInfo = new Map(); // id -> { name, color }
 let revealedPowers = new Map(); // id -> powerId, kept on the left panel until the match ends
@@ -1286,15 +1311,15 @@ function focusOn(entry, ms) {
   zoomFocus = { x: entry.x, z: entry.z, until: revealClock + ms };
 }
 
-// reveal a triggered hidden power: zoom in + a floating label (+ the Fool's fake-out gag)
+// reveal a triggered hidden power: zoom in + a floating label; also the Mirror card reflect
 function handlePowerEvents(s) {
   if (s.drunken) {
     const e = revealMeshMap.get(s.shooterId);
-    if (e) { focusOn(e, 2500); floatLabel(e.x, e.z, 2.5 * e.size, POWER_EMOJI.drunken + ' เมา!', '#ffd36b'); revealPower(s.shooterId, 'drunken'); }
+    if (e) { focusOn(e, 2500); floatLabel(e.x, e.z, 2.5 * e.size, POWER_EMOJI.drunken + ' เมาดิบ!', '#ffd36b'); revealPower(s.shooterId, 'drunken'); }
   }
   if (s.revenge) {
     const e = revealMeshMap.get(s.shooterId);
-    if (e) { focusOn(e, 2600); floatLabel(e.x, e.z, 2.3, POWER_EMOJI.revenger + ' REVENGE!', '#c9b3ff'); revealPower(s.shooterId, 'revenger'); }
+    if (e) { focusOn(e, 2600); floatLabel(e.x, e.z, 2.3, POWER_EMOJI.revenger + ' จิตพยาบาท!', '#c9b3ff'); revealPower(s.shooterId, 'revenger'); }
   }
   (s.dodges || []).forEach(id => {
     const e = revealMeshMap.get(id);
@@ -1308,17 +1333,15 @@ function handlePowerEvents(s) {
     const e = revealMeshMap.get(id);
     if (!e) return;
     focusOn(e, 2500);
-    floatLabel(e.x, e.z, 2.6 * e.size, POWER_EMOJI.man + ' THE MAN!', '#ffcf7a');
+    floatLabel(e.x, e.z, 2.6 * e.size, POWER_EMOJI.man + ' แผ่นหลังลูกผู้ชาย!', '#ffcf7a');
     revealPower(id, 'man');
   });
-  (s.foolGags || []).forEach(g => {
-    const e = revealMeshMap.get(g.victimId);
+  // Mirror card reflect (not a hidden power — shown but not logged in the power panel)
+  (s.mirrors || []).forEach(id => {
+    const e = revealMeshMap.get(id);
     if (!e) return;
-    focusOn(e, 2800);
-    floatLabel(e.x, e.z, 2.6 * e.size, (POWER_EMOJI[g.fakedPower] || '❓') + ' ?!', '#ffffff');
-    setTimeout(() => floatLabel(e.x, e.z, 2.9 * e.size, '🤡👋 โดนหลอก!', '#ff8fd0'), 700);
-    revealPower(s.shooterId, 'fool');       // the shooter is The Fool
-    revealPower(g.victimId, g.fakedPower);  // the victim's real (suppressed) power is now known
+    focusOn(e, 2200);
+    floatLabel(e.x, e.z, 2.6 * e.size, '🪞 สะท้อน!', '#bfe9ff');
   });
 }
 

@@ -18,7 +18,7 @@ const MIN_ISLAND_SIZE = 6;
 const SHRINK_FACTOR = 0.8;
 
 // ---- Special cards (dealt one per player each round) ----
-const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder'];
+const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror'];
 const FORK_ANGLE = 0.2618; // 15deg -> two bullets 30deg apart (The Divine)
 const THUNDER_RADIUS = 1.6; // ~1 block kill radius (The Thunder)
 // size multipliers for Go Big / Go Small (10% chance of the extreme version)
@@ -43,7 +43,7 @@ function inwardAngle(x, z) {
 }
 
 // ---- Hidden latent powers (one per player, fixed for the whole match) ----
-const POWER_IDS = ['matrix', 'drunken', 'revenger', 'fool', 'man'];
+const POWER_IDS = ['matrix', 'drunken', 'revenger', 'man'];
 // is a bullet travelling at `bulletAng` striking a player facing `faceAng` from behind?
 function hitFromBehind(bulletAng, faceAng) {
   return Math.sin(bulletAng) * Math.sin(faceAng) + Math.cos(bulletAng) * Math.cos(faceAng) > 0.15;
@@ -294,8 +294,8 @@ class Room {
 
     // 1. resolve every card (auto-assign a random target if the player never picked one)
     //    and accumulate the per-player effects it produces.
-    const fx = new Map(); // id -> { size, fork, bounce, thunder }
-    for (const p of alive) fx.set(p.id, { size: 1, fork: false, bounce: false, thunder: false });
+    const fx = new Map(); // id -> { size, fork, bounce, thunder, mirror }
+    for (const p of alive) fx.set(p.id, { size: 1, fork: false, bounce: false, thunder: false, mirror: false });
     const cards = []; // who cast what on whom (for the reveal display)
     for (const caster of alive) {
       let targetId = caster.cardTarget;
@@ -305,11 +305,13 @@ class Room {
       caster.cardTarget = targetId;
       const e = fx.get(targetId);
       switch (caster.card) {
+        // size cards stack (multiply) when several are cast on the same target
         case 'gobig': e.size *= goBigScale(); break;
         case 'gosmall': e.size *= goSmallScale(); break;
         case 'divine': e.fork = true; break;
         case 'bounce': e.bounce = true; break;
         case 'thunder': e.thunder = true; break;
+        case 'mirror': e.mirror = true; break;
       }
       cards.push({ casterId: caster.id, card: caster.card, targetId });
     }
@@ -318,15 +320,15 @@ class Room {
     const stillAlive = new Set(alive.map(p => p.id));
     const shots = [];
 
-    const foolKilled = new Set(); // victims whose latent power The Fool neutralised this round
-
-    // cast one straight segment. The Matrix lets its owner dodge the first hit of the match —
-    // the bullet floats past to whoever stands behind — unless the shooter is The Fool.
-    const castSegment = (ox, oz, ang, shooter, excludeIds, dodgeOut) => {
+    // cast one straight segment. `selfId` is the id the bullet won't hit (its owner); it changes
+    // after a Mirror reflection so the shot can fly back into the original shooter.
+    // The Matrix lets its owner dodge the first hit of the match (bullet floats past to whoever's
+    // behind) — but a Mirror card on that target overrides the dodge (card beats power).
+    const castSegment = (ox, oz, ang, shooter, selfId, excludeIds, dodgeOut) => {
       const dx = Math.sin(ang), dz = Math.cos(ang);
       const cands = [];
       for (const t of alive) {
-        if (t.id === shooter.id || !stillAlive.has(t.id) || excludeIds.has(t.id)) continue;
+        if (t.id === selfId || !stillAlive.has(t.id) || excludeIds.has(t.id)) continue;
         const vx = t.x - ox, vz = t.z - oz;
         const fwd = vx * dx + vz * dz;
         if (fwd <= 0.05) continue;
@@ -338,7 +340,7 @@ class Room {
       for (const c of cands) {
         if (c.fwd > exitDist) break;
         const t = c.t;
-        if (t.power === 'matrix' && !t.matrixUsed && shooter.power !== 'fool') {
+        if (t.power === 'matrix' && !t.matrixUsed && !fx.get(t.id).mirror) {
           t.matrixUsed = true;
           dodgeOut.push(t.id);
           continue; // dodged
@@ -349,30 +351,37 @@ class Room {
       return { hitId: null, x: ox + dx * d, z: oz + dz * d, exited: exitDist < 40 };
     };
 
-    // resolve one bullet (with bounces / MAN ricochets / Fool suppression), mutating shooterHits + ev
-    const fireBullet = (shooter, a0, bounces, shooterHits, ev) => {
+    // resolve one bullet (bounces / MAN ricochets / Mirror reflections), collecting kills + events
+    const fireBullet = (shooter, a0, bounces, kills, ev) => {
       const segments = [];
-      let ox = shooter.x, oz = shooter.z, ang = a0, bouncesLeft = bounces;
-      for (let step = 0; step < 4; step++) {
-        const r = castSegment(ox, oz, ang, shooter, shooterHits, ev.dodges);
+      const touched = new Set(kills); // never interact with the same player twice on one bullet
+      let ox = shooter.x, oz = shooter.z, ang = a0, bouncesLeft = bounces, selfId = shooter.id;
+      for (let step = 0; step < 6; step++) {
+        const r = castSegment(ox, oz, ang, shooter, selfId, touched, ev.dodges);
         const seg = { x1: ox, z1: oz, x2: r.x, z2: r.z, hitId: null };
         segments.push(seg);
         if (r.hitId) {
           const victim = aliveMap.get(r.hitId);
-          // The MAN ricochets any shot that strikes his back (unless the shooter is The Fool)
-          if (shooter.power !== 'fool' && victim && victim.power === 'man' && hitFromBehind(ang, victim.angle)) {
+          // Mirror card: thorn armour bounces the shot straight back at the shooter (card beats power)
+          if (fx.get(r.hitId).mirror) {
+            seg.mirror = victim.id;
+            ev.mirror.push(victim.id);
+            touched.add(victim.id);
+            ang = Math.atan2(shooter.x - r.x, shooter.z - r.z); // aim back at the shooter
+            ox = r.x; oz = r.z; selfId = victim.id; // reflected: the shooter is now hittable
+            continue;
+          }
+          // The MAN ricochets any shot that strikes his back
+          if (victim && victim.power === 'man' && hitFromBehind(ang, victim.angle)) {
             seg.manDeflect = victim.id;
             ev.man.push(victim.id);
+            touched.add(victim.id);
             ox = r.x; oz = r.z; ang = Math.random() * Math.PI * 2;
             continue; // survives, does not consume a bounce
           }
           seg.hitId = r.hitId;
-          shooterHits.add(r.hitId);
-          // The Fool neutralises the victim's latent power (faked on screen, then a clown slap)
-          if (shooter.power === 'fool' && victim && victim.power) {
-            ev.fool.push({ victimId: victim.id, fakedPower: victim.power });
-            foolKilled.add(victim.id);
-          }
+          kills.add(r.hitId);
+          touched.add(r.hitId);
           if (bouncesLeft > 0) { bouncesLeft--; ox = r.x; oz = r.z; ang = Math.random() * Math.PI * 2; continue; }
           break;
         } else if (r.exited && bouncesLeft > 0) {
@@ -411,27 +420,28 @@ class Room {
 
       // one or two bullets (The Divine forks into two), each able to bounce once (The Bounce)
       const angles = e.fork ? [baseAngle - FORK_ANGLE, baseAngle + FORK_ANGLE] : [baseAngle];
-      const shooterHits = new Set();
-      const ev = { dodges: [], man: [], fool: [] };
-      const bullets = angles.map(a0 => ({ segments: fireBullet(shooter, a0, e.bounce ? 1 : 0, shooterHits, ev) }));
-      shooterHits.forEach(id => stillAlive.delete(id));
+      const kills = new Set();
+      const ev = { dodges: [], man: [], mirror: [] };
+      const bullets = angles.map(a0 => ({ segments: fireBullet(shooter, a0, e.bounce ? 1 : 0, kills, ev) }));
+      kills.forEach(id => stillAlive.delete(id));
       shots.push({
-        shooterId: shooter.id, type: 'shot', bullets, hitIds: [...shooterHits],
-        dodges: ev.dodges, manDeflects: ev.man, foolGags: ev.fool, drunken
+        shooterId: shooter.id, type: 'shot', bullets, hitIds: [...kills],
+        dodges: ev.dodges, manDeflects: ev.man, mirrors: ev.mirror, drunken
       });
     }
 
-    // The Revenger: anyone who fell this round (and wasn't neutralised by The Fool) fires a
-    // final bullet in a random direction as they drop.
+    // The Revenger (จิตพยาบาท): anyone who fell this round fires THREE bullets in random
+    // directions as they drop.
     for (const dead of alive.filter(p => !stillAlive.has(p.id))) {
-      if (dead.power !== 'revenger' || foolKilled.has(dead.id)) continue;
-      const shooterHits = new Set();
-      const ev = { dodges: [], man: [], fool: [] };
-      const segments = fireBullet(dead, Math.random() * Math.PI * 2, 0, shooterHits, ev);
-      shooterHits.forEach(id => stillAlive.delete(id));
+      if (dead.power !== 'revenger') continue;
+      const kills = new Set();
+      const ev = { dodges: [], man: [], mirror: [] };
+      const bullets = [];
+      for (let i = 0; i < 3; i++) bullets.push({ segments: fireBullet(dead, Math.random() * Math.PI * 2, 0, kills, ev) });
+      kills.forEach(id => stillAlive.delete(id));
       shots.push({
-        shooterId: dead.id, type: 'shot', revenge: true, bullets: [{ segments }], hitIds: [...shooterHits],
-        dodges: ev.dodges, manDeflects: ev.man, foolGags: ev.fool, drunken: false
+        shooterId: dead.id, type: 'shot', revenge: true, bullets, hitIds: [...kills],
+        dodges: ev.dodges, manDeflects: ev.man, mirrors: ev.mirror, drunken: false
       });
     }
 
