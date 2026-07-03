@@ -221,14 +221,13 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b1220);
-scene.fog = new THREE.Fog(0x0b1220, 25, 60);
+scene.fog = new THREE.Fog(0xdce8f2, 48, 140); // soft cloud haze; background set in the scenery setup below
 
-const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 260);
 
-const hemi = new THREE.HemisphereLight(0xbfd6ff, 0x1a2340, 0.9);
+const hemi = new THREE.HemisphereLight(0xe4eeff, 0x9a8f7a, 1.05);
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+const sun = new THREE.DirectionalLight(0xfff2e0, 1.15);
 sun.position.set(10, 20, 8);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
@@ -245,19 +244,106 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
+// ---------- Sky & sea of clouds (pure scenery — a floating island vibe) ----------
+function makeSkyTexture() {
+  const c = document.createElement('canvas'); c.width = 8; c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, '#b8d3ef'); g.addColorStop(0.55, '#e7eef7'); g.addColorStop(1, '#f6e7e2');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 8, 256);
+  const t = new THREE.CanvasTexture(c);
+  if ('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function makeCloudTexture() {
+  const s = 128; const c = document.createElement('canvas'); c.width = c.height = s;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  g.addColorStop(0, 'rgba(255,255,255,0.95)');
+  g.addColorStop(0.55, 'rgba(240,246,252,0.55)');
+  g.addColorStop(1, 'rgba(240,246,252,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2); ctx.fill();
+  return new THREE.CanvasTexture(c);
+}
+scene.background = makeSkyTexture();
+(function buildScenery() {
+  const g = new THREE.Group();
+  // a soft cloud "floor" far below so there's no empty void under the island
+  const floor = new THREE.Mesh(
+    new THREE.CircleGeometry(150, 40),
+    new THREE.MeshBasicMaterial({ color: 0xeef4fb, transparent: true, opacity: 0.9 })
+  );
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -12; g.add(floor);
+  // scattered cloud puffs forming a sea of clouds around & below the island
+  const cloudTex = makeCloudTexture();
+  for (let i = 0; i < 80; i++) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: cloudTex, transparent: true, opacity: 0.85, depthWrite: false }));
+    const a = Math.random() * Math.PI * 2, rad = 15 + Math.random() * 78;
+    sp.position.set(Math.cos(a) * rad, -2.5 - Math.random() * 8, Math.sin(a) * rad);
+    const sc = 6 + Math.random() * 11; sp.scale.set(sc, sc * 0.6, 1);
+    g.add(sp);
+  }
+  // distant misty rock peaks poking out of the clouds (Chinese-landscape backdrop)
+  const peakMat = new THREE.MeshStandardMaterial({ color: 0xb4c2d3, roughness: 1, flatShading: true, transparent: true, opacity: 0.85 });
+  for (let i = 0; i < 13; i++) {
+    const a = Math.random() * Math.PI * 2, rad = 55 + Math.random() * 55;
+    const h = 9 + Math.random() * 18, r = 3 + Math.random() * 4;
+    const p = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), peakMat);
+    p.position.set(Math.cos(a) * rad, -7 + h / 2, Math.sin(a) * rad);
+    p.rotation.y = Math.random() * Math.PI;
+    g.add(p);
+  }
+  scene.add(g);
+})();
+
+// small stylized decorations that cling to the island rim (pure scenery)
+function makePineTree(x, z) {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.5, 6), new THREE.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 1 }));
+  trunk.position.y = 0.25; g.add(trunk);
+  const folMat = new THREE.MeshStandardMaterial({ color: 0x2f7d4f, roughness: 1, flatShading: true });
+  for (let k = 0; k < 3; k++) {
+    const c = new THREE.Mesh(new THREE.ConeGeometry(0.34 - k * 0.08, 0.42, 7), folMat);
+    c.position.y = 0.5 + k * 0.3; c.castShadow = true; g.add(c);
+  }
+  g.position.set(x, -0.3, z);
+  return g;
+}
+function makePagoda(x, z) {
+  const g = new THREE.Group();
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0xceb089, roughness: 1 });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0xb5462f, roughness: 0.8, flatShading: true });
+  const w1 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), wallMat); w1.position.y = 0.25; g.add(w1);
+  const r1 = new THREE.Mesh(new THREE.ConeGeometry(0.55, 0.28, 4), roofMat); r1.position.y = 0.62; r1.rotation.y = Math.PI / 4; g.add(r1);
+  const w2 = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.34), wallMat); w2.position.y = 0.9; g.add(w2);
+  const r2 = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.24, 4), roofMat); r2.position.y = 1.15; r2.rotation.y = Math.PI / 4; g.add(r2);
+  g.position.set(x, -0.2, z);
+  return g;
+}
+
 // ---------- Island ----------
 let islandGroup = new THREE.Group();
 scene.add(islandGroup);
+
+// a point at parameter t (0..1) around the rim of a square of half-size r
+function rimPoint(t, r) {
+  const p = (t % 1) * 4, side = Math.floor(p), u = ((p - side) * 2 - 1) * r;
+  if (side === 0) return [u, -r];
+  if (side === 1) return [r, u];
+  if (side === 2) return [-u, r];
+  return [-r, u];
+}
 
 function buildIsland(size) {
   scene.remove(islandGroup);
   islandGroup = new THREE.Group();
   const n = Math.round(size);
+  const half = n / 2;
   const topGeo = new THREE.BoxGeometry(1, 1, 1);
   const grassMatA = new THREE.MeshStandardMaterial({ color: 0x5cbf5c, roughness: 0.9 });
   const grassMatB = new THREE.MeshStandardMaterial({ color: 0x4fae4f, roughness: 0.9 });
-  const dirtMat = new THREE.MeshStandardMaterial({ color: 0x8a6035, roughness: 1 });
 
+  // playable grass grid (unchanged — this is the game surface)
   for (let ix = 0; ix < n; ix++) {
     for (let iz = 0; iz < n; iz++) {
       const x = ix - (n - 1) / 2;
@@ -266,19 +352,37 @@ function buildIsland(size) {
       const block = new THREE.Mesh(topGeo, mat);
       block.position.set(x, -0.5, z);
       block.receiveShadow = true;
-      block.castShadow = false;
       islandGroup.add(block);
-      // underside skirt for a floating-island look at the border
-      const isEdge = ix === 0 || iz === 0 || ix === n - 1 || iz === n - 1;
-      if (isEdge) {
-        for (let d = 1; d <= 2; d++) {
-          const skirt = new THREE.Mesh(topGeo, dirtMat);
-          skirt.position.set(x, -0.5 - d, z);
-          islandGroup.add(skirt);
-        }
-      }
     }
   }
+
+  // rocky cliff base underneath — the floating-island look (pure scenery)
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x949aa3, roughness: 1, flatShading: true });
+  const H = half * 1.7 + 4;
+  const rock = new THREE.Mesh(new THREE.ConeGeometry(half * 1.12, H, 7), rockMat);
+  rock.rotation.x = Math.PI;           // apex points down
+  rock.rotation.y = Math.random() * Math.PI;
+  rock.position.y = -1 - H / 2 + 0.7;  // wide top tucks just under the grass
+  rock.castShadow = true;
+  islandGroup.add(rock);
+  for (let i = 0; i < 3; i++) {         // a few smaller lumps for a rugged silhouette
+    const hh = half * (0.8 + Math.random());
+    const lump = new THREE.Mesh(new THREE.ConeGeometry(half * (0.35 + Math.random() * 0.3), hh, 6), rockMat);
+    lump.rotation.x = Math.PI;
+    const a = Math.random() * Math.PI * 2;
+    lump.position.set(Math.cos(a) * half * 0.55, -1.5 - hh / 2, Math.sin(a) * half * 0.55);
+    islandGroup.add(lump);
+  }
+
+  // pine trees + a small pagoda along the square rim (just outside the walkable area)
+  const treeCount = Math.max(6, Math.round(n * 0.7));
+  for (let i = 0; i < treeCount; i++) {
+    const [tx, tz] = rimPoint((i + Math.random() * 0.6) / treeCount, half + 0.15);
+    islandGroup.add(makePineTree(tx, tz));
+  }
+  const [px, pz] = rimPoint(Math.random(), half + 0.25);
+  islandGroup.add(makePagoda(px, pz));
+
   scene.add(islandGroup);
   return n;
 }
