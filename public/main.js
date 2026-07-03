@@ -1,7 +1,22 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 
 // ---------- Socket & UI plumbing ----------
 const socket = io();
+
+// ---------- 3D character model (proof-of-concept: real rigged model) ----------
+let charTemplate = null; // { scene, animations }
+const charMixers = []; // { mixer, mesh } — updated each frame, pruned when the mesh leaves the scene
+new GLTFLoader().load('models/RobotExpressive.glb',
+  gltf => { charTemplate = { scene: gltf.scene, animations: gltf.animations }; },
+  undefined,
+  err => console.warn('[char] model load failed, falling back to blocks', err));
+
+function clipByName(name) {
+  if (!charTemplate) return null;
+  return charTemplate.animations.find(a => a.name === name) || null;
+}
 let selfId = null;
 let roomCode = null;
 let isHost = false;
@@ -474,6 +489,57 @@ function addBackDecoration(group, back) {
 }
 
 function makePlayerMesh(color, isSelf, hat, back) {
+  // use the real rigged 3D model once it's loaded; otherwise fall back to the block character
+  const group = charTemplate ? makeCharMesh(color) : makeBlockMesh(color, hat, back);
+
+  if (isSelf) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.5, 0.6, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.6 })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.02;
+    group.add(ring);
+    group.userData.ring = ring;
+  }
+  return group;
+}
+
+// clone the loaded rigged model, tint it to the player colour, and start its idle loop
+function makeCharMesh(color) {
+  const group = new THREE.Group();
+  const model = skeletonClone(charTemplate.scene);
+  model.scale.setScalar(0.34);            // fit the model to the game's player size (tune as needed)
+  model.rotation.y = Math.PI;             // face forward (+Z, the aim direction)
+  model.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.material = o.material.clone();     // per-instance material so tinting doesn't affect other players
+      if (/main/i.test(o.material.name || '')) o.material.color.set(color);
+    }
+  });
+  group.add(model);
+
+  // coloured base ring so each player's colour is easy to read from above
+  const base = new THREE.Mesh(
+    new THREE.RingGeometry(0.42, 0.58, 28),
+    new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+  );
+  base.rotation.x = -Math.PI / 2;
+  base.position.y = 0.015;
+  group.add(base);
+
+  const idle = clipByName('Idle');
+  if (idle) {
+    const mixer = new THREE.AnimationMixer(model);
+    mixer.clipAction(idle).play();
+    charMixers.push({ mixer, mesh: group });
+  }
+  return group;
+}
+
+// original geometric block character (fallback / until the model finishes loading)
+function makeBlockMesh(color, hat, back) {
   const group = new THREE.Group();
   const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.85, 0.4), bodyMat);
@@ -486,24 +552,12 @@ function makePlayerMesh(color, isSelf, hat, back) {
   addHatDecoration(group, hat);
   addBackDecoration(group, back);
 
-  // gun / aim nub on front
   const nub = new THREE.Mesh(
     new THREE.BoxGeometry(0.12, 0.12, 0.5),
     new THREE.MeshStandardMaterial({ color: 0x222222 })
   );
   nub.position.set(0, 0.55, 0.35);
   group.add(nub);
-
-  if (isSelf) {
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.5, 0.6, 24),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.6 })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.02;
-    group.add(ring);
-    group.userData.ring = ring;
-  }
   return group;
 }
 
@@ -1568,6 +1622,11 @@ function animate() {
   updatePlacement(dt);
   updateSpectate(dt);
   updateReveal(dt);
+  // advance character animations; drop mixers whose mesh has left the scene
+  for (let i = charMixers.length - 1; i >= 0; i--) {
+    if (!charMixers[i].mesh.parent) charMixers.splice(i, 1);
+    else charMixers[i].mixer.update(dt);
+  }
   renderer.render(scene, camera);
 }
 animate();
