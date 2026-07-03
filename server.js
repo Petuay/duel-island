@@ -90,8 +90,7 @@ function hitFromBehind(bulletAng, faceAng) {
   return Math.sin(bulletAng) * Math.sin(faceAng) + Math.cos(bulletAng) * Math.cos(faceAng) > 0.15;
 }
 
-const HAT_IDS = ['none', 'party', 'tophat', 'halo', 'horns', 'bunny', 'crown', 'propeller', 'chef'];
-const BACK_IDS = ['none', 'devilwing', 'chickenwing', 'angelwing', 'jetpack', 'cape', 'balloon'];
+const CHAR_IDS = ['buddha', 'jesus', 'kongming']; // selectable character models
 
 // sequential fire animation timing (mirrored client-side in main.js)
 const SHOT_START_DELAY = 4200; // pause (also the firing-order shuffle window) before the first shot
@@ -168,7 +167,7 @@ class Room {
 
   publicPlayers() {
     return [...this.players.values()].map(p => ({
-      id: p.id, name: p.name, color: p.color, alive: p.alive, isBot: !!p.isBot, hat: p.hat, back: p.back
+      id: p.id, name: p.name, color: p.color, alive: p.alive, isBot: !!p.isBot, char: p.char
     }));
   }
 
@@ -186,8 +185,7 @@ class Room {
     this.players.set(id, {
       id, name, color, x: 0, z: 0, angle: 0,
       alive: true, ready: false, isBot: true,
-      hat: HAT_IDS[1 + Math.floor(Math.random() * (HAT_IDS.length - 1))],
-      back: BACK_IDS[1 + Math.floor(Math.random() * (BACK_IDS.length - 1))]
+      char: CHAR_IDS[Math.floor(Math.random() * CHAR_IDS.length)]
     });
   }
 
@@ -365,7 +363,7 @@ class Room {
     io.to(this.spectatorRoom).emit('spectateSnapshot', {
       round: this.round,
       players: aliveList.map(p => ({
-        id: p.id, name: p.name, color: p.color, hat: p.hat, back: p.back,
+        id: p.id, name: p.name, color: p.color, char: p.char,
         x: p.x, z: p.z, angle: p.angle
       }))
     });
@@ -606,7 +604,7 @@ class Room {
       players: [...this.players.values()]
         .filter(p => alive.includes(p) || eliminated.includes(p.id))
         .map(p => ({
-          id: p.id, name: p.name, color: p.color, hat: p.hat, back: p.back,
+          id: p.id, name: p.name, color: p.color, char: p.char,
           x: p.x, z: p.z, angle: p.angle,
           alive: p.alive,
           wasHit: eliminated.includes(p.id),
@@ -688,8 +686,7 @@ io.on('connection', socket => {
       x: 0, z: 0, angle: 0,
       alive: true,
       ready: false,
-      hat: 'none',
-      back: 'none'
+      char: 'buddha'
     });
     socket.emit('joined', { code: room.code, selfId: socket.id });
     room.broadcastRoom();
@@ -710,21 +707,12 @@ io.on('connection', socket => {
     room.broadcastRoom();
   });
 
-  socket.on('setHat', ({ hat }) => {
+  socket.on('setChar', ({ char }) => {
     const room = rooms.get(currentRoomCode);
     if (!room || room.state !== 'lobby') return;
     const p = room.players.get(socket.id);
-    if (!p || !HAT_IDS.includes(hat)) return;
-    p.hat = hat;
-    room.broadcastRoom();
-  });
-
-  socket.on('setBack', ({ back }) => {
-    const room = rooms.get(currentRoomCode);
-    if (!room || room.state !== 'lobby') return;
-    const p = room.players.get(socket.id);
-    if (!p || !BACK_IDS.includes(back)) return;
-    p.back = back;
+    if (!p || !CHAR_IDS.includes(char)) return;
+    p.char = char;
     room.broadcastRoom();
   });
 

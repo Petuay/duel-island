@@ -7,3 +7,4 @@ npm-debug.log*
 # large model source archives (keep only the extracted .glb in public/models)
 TestModel.zip
 *.zip
+/TestModel*

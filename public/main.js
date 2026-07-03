@@ -1,55 +1,38 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 // ---------- Socket & UI plumbing ----------
 const socket = io();
 
-// ---------- 3D character model (proof-of-concept: real model) ----------
-const MODEL_HEIGHT = 1.35;   // world height the model is scaled to fit
-const MODEL_FACE_Y = 0;      // extra yaw so the model faces its aim (+Z); flip to Math.PI if backwards
-let charTemplate = null;     // { scene, animations }
+// ---------- 3D character models (pick one of these) ----------
+const MODEL_HEIGHT = 1.35;   // world height each model is scaled to fit
+const MODEL_FACE_Y = 0;      // extra yaw so a model faces its aim (+Z); flip to Math.PI if backwards
+const CHARACTERS = [
+  { id: 'buddha', name: 'บุดด้า' },
+  { id: 'jesus', name: 'จีซัส' },
+  { id: 'kongming', name: 'ขงเบ้ง' }
+];
+const charTemplates = {};    // id -> { scene, animations }
 const charMixers = [];       // { mixer, mesh } — updated each frame, pruned when the mesh leaves the scene
-new GLTFLoader().load('models/character.glb',
-  gltf => { charTemplate = { scene: gltf.scene, animations: gltf.animations }; },
-  undefined,
-  err => console.warn('[char] model load failed, falling back to blocks', err));
+let selfChar = 'buddha';
+(() => {
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  CHARACTERS.forEach(c => loader.load(`models/${c.id}.glb`,
+    gltf => { charTemplates[c.id] = { scene: gltf.scene, animations: gltf.animations }; },
+    undefined,
+    err => console.warn('[char] load failed:', c.id, err)));
+})();
 
-function clipByName(name) {
-  if (!charTemplate) return null;
-  return charTemplate.animations.find(a => a.name === name) || null;
+function clipByName(tpl, name) {
+  return tpl && tpl.animations ? (tpl.animations.find(a => a.name === name) || null) : null;
 }
 let selfId = null;
 let roomCode = null;
 let isHost = false;
 let currentIslandSize = 16;
 let currentRound = 1;
-
-// ---------- Hats ----------
-const HATS = [
-  { id: 'none', emoji: '🚫' },
-  { id: 'party', emoji: '🎉' },
-  { id: 'tophat', emoji: '🎩' },
-  { id: 'halo', emoji: '😇' },
-  { id: 'horns', emoji: '😈' },
-  { id: 'bunny', emoji: '🐰' },
-  { id: 'crown', emoji: '👑' },
-  { id: 'propeller', emoji: '🚁' },
-  { id: 'chef', emoji: '👨‍🍳' }
-];
-let selfHat = 'none';
-
-// ---------- Back decorations ----------
-const BACKS = [
-  { id: 'none', emoji: '🚫' },
-  { id: 'devilwing', emoji: '😈' },
-  { id: 'chickenwing', emoji: '🍗' },
-  { id: 'angelwing', emoji: '👼' },
-  { id: 'jetpack', emoji: '🚀' },
-  { id: 'cape', emoji: '🦸' },
-  { id: 'balloon', emoji: '🎈' }
-];
-let selfBack = 'none';
 
 // ---------- Special cards (dealt one per round) ----------
 const CARDS = [
@@ -84,30 +67,21 @@ function shotHasZoom(s) {
 
 const $ = id => document.getElementById(id);
 
-const hatPickerEl = $('hatPicker');
-HATS.forEach(h => {
+// ---------- Character picker (lobby) ----------
+const charPickerEl = $('charPicker');
+CHARACTERS.forEach(c => {
   const btn = document.createElement('button');
-  btn.className = 'hatBtn';
-  btn.textContent = h.emoji;
-  btn.title = h.id;
-  btn.addEventListener('click', () => socket.emit('setHat', { hat: h.id }));
-  hatPickerEl.appendChild(btn);
+  btn.className = 'charBtn';
+  btn.textContent = c.name;
+  btn.addEventListener('click', () => {
+    selfChar = c.id;
+    socket.emit('setChar', { char: c.id });
+    updateCharPickerUI();
+  });
+  charPickerEl.appendChild(btn);
 });
-function updateHatPickerUI() {
-  [...hatPickerEl.children].forEach((btn, i) => btn.classList.toggle('active', HATS[i].id === selfHat));
-}
-
-const backPickerEl = $('backPicker');
-BACKS.forEach(b => {
-  const btn = document.createElement('button');
-  btn.className = 'hatBtn';
-  btn.textContent = b.emoji;
-  btn.title = b.id;
-  btn.addEventListener('click', () => socket.emit('setBack', { back: b.id }));
-  backPickerEl.appendChild(btn);
-});
-function updateBackPickerUI() {
-  [...backPickerEl.children].forEach((btn, i) => btn.classList.toggle('active', BACKS[i].id === selfBack));
+function updateCharPickerUI() {
+  [...charPickerEl.children].forEach((btn, i) => btn.classList.toggle('active', CHARACTERS[i].id === selfChar));
 }
 
 const homeScreen = $('homeScreen');
@@ -190,16 +164,14 @@ socket.on('roomUpdate', data => {
     list.innerHTML = '';
     data.players.forEach(p => {
       if (p.id === selfId) {
-        selfHat = p.hat || 'none'; updateHatPickerUI();
-        selfBack = p.back || 'none'; updateBackPickerUI();
+        selfChar = p.char || 'buddha'; updateCharPickerUI();
         selfAlive = true;
       }
-      const hatEmoji = (HATS.find(h => h.id === p.hat) || HATS[0]).emoji;
-      const backEmoji = (BACKS.find(b => b.id === p.back) || BACKS[0]).emoji;
+      const charName = (CHARACTERS.find(c => c.id === p.char) || CHARACTERS[0]).name;
       const li = document.createElement('li');
       const label = document.createElement('span');
       label.innerHTML = `<span class="dot" style="background:${p.color}"></span>
-        <span>${p.isBot ? '🤖 ' : ''}${p.hat && p.hat !== 'none' ? hatEmoji + ' ' : ''}${p.back && p.back !== 'none' ? backEmoji + ' ' : ''}${escapeHtml(p.name)}${p.id === data.hostId ? ' 👑' : ''}${p.id === selfId ? ' (คุณ)' : ''}</span>`;
+        <span>${p.isBot ? '🤖 ' : ''}${escapeHtml(p.name)} <small style="opacity:.6">(${charName})</small>${p.id === data.hostId ? ' 👑' : ''}${p.id === selfId ? ' (คุณ)' : ''}</span>`;
       label.style.display = 'flex';
       label.style.alignItems = 'center';
       label.style.gap = '10px';
@@ -490,9 +462,10 @@ function addBackDecoration(group, back) {
   }
 }
 
-function makePlayerMesh(color, isSelf, hat, back) {
-  // use the real rigged 3D model once it's loaded; otherwise fall back to the block character
-  const group = charTemplate ? makeCharMesh(color) : makeBlockMesh(color, hat, back);
+function makePlayerMesh(color, isSelf, char) {
+  // use the chosen 3D model once it's loaded; otherwise fall back to the block character
+  const tpl = charTemplates[char] || charTemplates[CHARACTERS[0].id];
+  const group = tpl ? makeCharMesh(color, tpl) : makeBlockMesh(color);
 
   if (isSelf) {
     const ring = new THREE.Mesh(
@@ -508,10 +481,10 @@ function makePlayerMesh(color, isSelf, hat, back) {
 }
 
 // clone the loaded model, auto-fit it to the game's player size, and (if rigged) start its idle loop
-function makeCharMesh(color) {
+function makeCharMesh(color, tpl) {
   const group = new THREE.Group();
   const inner = new THREE.Group();       // holds the model so we can offset/scale it without touching the group
-  const model = skeletonClone(charTemplate.scene);
+  const model = skeletonClone(tpl.scene);
   model.traverse(o => { if (o.isMesh) o.castShadow = true; });
   inner.add(model);
 
@@ -535,7 +508,7 @@ function makeCharMesh(color) {
   base.position.y = 0.015;
   group.add(base);
 
-  const idle = clipByName('Idle');
+  const idle = clipByName(tpl, 'Idle');
   if (idle) {
     const mixer = new THREE.AnimationMixer(model);
     mixer.clipAction(idle).play();
@@ -544,8 +517,8 @@ function makeCharMesh(color) {
   return group;
 }
 
-// original geometric block character (fallback / until the model finishes loading)
-function makeBlockMesh(color, hat, back) {
+// original geometric block character (fallback / until a model finishes loading)
+function makeBlockMesh(color) {
   const group = new THREE.Group();
   const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.85, 0.4), bodyMat);
@@ -555,8 +528,6 @@ function makeBlockMesh(color, hat, back) {
   head.position.y = 0.85 + 0.21;
   head.castShadow = true;
   group.add(body, head);
-  addHatDecoration(group, hat);
-  addBackDecoration(group, back);
 
   const nub = new THREE.Mesh(
     new THREE.BoxGeometry(0.12, 0.12, 0.5),
@@ -960,7 +931,7 @@ socket.on('spectateSnapshot', data => {
   clearSpectatorMeshes();
   data.players.forEach(p => {
     if (p.id === selfId) return;
-    const mesh = makePlayerMesh(p.color, false, p.hat, p.back);
+    const mesh = makePlayerMesh(p.color, false, p.char);
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = p.angle;
     scene.add(mesh);
@@ -1162,7 +1133,7 @@ socket.on('placeStart', data => {
     $('instructions').textContent = 'WASD เดิน • เมาส์เล็งทิศ • ใช้การ์ดด้านขวา • SPACE ยืนยัน';
     selfPos.set((Math.random() - 0.5) * 1, 0, (Math.random() - 0.5) * 1);
     selfAngle = Math.random() * Math.PI * 2;
-    selfMesh = makePlayerMesh(selfColor, true, selfHat, selfBack);
+    selfMesh = makePlayerMesh(selfColor, true, selfChar);
     scene.add(selfMesh);
     selfLaser = makeLaser(selfColor);
     selfLaser.material.opacity = 0.5;
@@ -1442,7 +1413,7 @@ socket.on('roundResult', data => {
 
   data.players.forEach(p => {
     const size = p.size || 1;
-    const mesh = makePlayerMesh(p.color, p.id === selfId, p.hat, p.back);
+    const mesh = makePlayerMesh(p.color, p.id === selfId, p.char);
     mesh.position.set(p.x, 0, p.z);
     mesh.rotation.y = p.angle;
     mesh.scale.setScalar(size);
