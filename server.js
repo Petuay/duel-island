@@ -22,6 +22,20 @@ const SHRINK_FACTOR = 0.8;
 // player-target cards + area cards (placed on the ground instead of a player)
 const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror', 'wall', 'cyclone', 'firework'];
 const AREA_CARDS = new Set(['wall', 'cyclone', 'firework']);
+// area cards are dealt a third as often as player-target cards
+const cardWeight = id => (AREA_CARDS.has(id) ? 1 : 3);
+// deal 3 distinct cards, weighted so area cards show up less
+function dealChoices() {
+  const pool = CARD_IDS.slice();
+  const out = [];
+  for (let i = 0; i < 3 && pool.length; i++) {
+    let total = pool.reduce((s, id) => s + cardWeight(id), 0);
+    let r = Math.random() * total, idx = 0;
+    for (; idx < pool.length - 1; idx++) { r -= cardWeight(pool[idx]); if (r <= 0) break; }
+    out.push(pool.splice(idx, 1)[0]);
+  }
+  return out;
+}
 const FORK_ANGLE = 0.2618; // 15deg -> two bullets 30deg apart (The Divine)
 const THUNDER_RADIUS = 1.6; // ~1 block kill radius (The Thunder)
 const FIREWORK_KILL = 1.5; // half-size of the 3x3 block explosion
@@ -83,6 +97,12 @@ const BACK_IDS = ['none', 'devilwing', 'chickenwing', 'angelwing', 'jetpack', 'c
 const SHOT_START_DELAY = 4200; // pause (also the firing-order shuffle window) before the first shot
 const SHOT_INTERVAL = 1300; // gap between each player's turn to fire
 const SHOT_END_PAUSE = 800; // pause after the last shot before advancing
+const POWER_PAUSE = 1900; // extra gap after a shot that triggered a power/mirror zoom (let it finish)
+// a shot that pulls the camera in on a hidden power (or mirror) — the reveal waits for it
+function shotHasZoom(s) {
+  return !!(s.drunken || s.revenge || (s.dodges && s.dodges.length) ||
+    (s.manDeflects && s.manDeflects.length) || (s.mirrors && s.mirrors.length));
+}
 
 const COLORS = [
   '#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6',
@@ -265,10 +285,8 @@ class Room {
       p.card = null;
       p.cardTarget = null;
       p.cardArea = null;
-      // deal 3 distinct random cards to choose from
-      const pool = CARD_IDS.slice();
-      p.cardChoices = [];
-      for (let i = 0; i < 3 && pool.length; i++) p.cardChoices.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+      // deal 3 distinct cards to choose from (area cards weighted to appear less)
+      p.cardChoices = dealChoices();
       // bots choose one of their 3 immediately
       if (p.isBot) p.card = p.cardChoices[Math.floor(Math.random() * p.cardChoices.length)];
     }
@@ -603,7 +621,8 @@ class Room {
     };
     io.to(this.code).emit('roundResult', payload);
 
-    const revealDuration = SHOT_START_DELAY + shots.length * SHOT_INTERVAL + SHOT_END_PAUSE;
+    const zoomCount = shots.filter(shotHasZoom).length;
+    const revealDuration = SHOT_START_DELAY + shots.length * SHOT_INTERVAL + SHOT_END_PAUSE + zoomCount * POWER_PAUSE;
     this.timer = setTimeout(() => this.afterReveal(), revealDuration);
   }
 

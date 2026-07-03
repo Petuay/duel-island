@@ -57,7 +57,13 @@ let myCardTarget = null; // whom I aimed my card at
 // mirrors server.js timing constants for the sequential fire animation
 const SHOT_START_DELAY = 4200;
 const SHOT_INTERVAL = 1300;
+const POWER_PAUSE = 1900; // extra gap after a shot that triggers a power/mirror zoom
 const BULLET_SPEED = 16; // units/sec — medium travel speed for the bullet ball
+// does this shot pull the camera in on a power/mirror? (must match server shotHasZoom)
+function shotHasZoom(s) {
+  return !!(s.drunken || s.revenge || (s.dodges && s.dodges.length) ||
+    (s.manDeflects && s.manDeflects.length) || (s.mirrors && s.mirrors.length));
+}
 
 const $ = id => document.getElementById(id);
 
@@ -1367,6 +1373,7 @@ socket.on('roundResult', data => {
   clearRevealMeshes();
   clearSpectatorMeshes();
 
+  $('guidePanel').classList.add('hidden'); // close the guide so it doesn't cover the reveal card log
   data.players.forEach(p => playerInfo.set(p.id, { name: p.name, color: p.color }));
   buildCardLog(data);       // which cards were played on whom this round (left)
   renderPowerLog();         // keep the revealed-powers list up to date (left)
@@ -1392,7 +1399,14 @@ socket.on('roundResult', data => {
   });
 
   // blood/deaths are now triggered as the travelling bullets (or thunder) actually reach victims
-  revealShots = data.shots.map((s, i) => ({ ...s, fireTime: SHOT_START_DELAY + i * SHOT_INTERVAL, triggered: false }));
+  // each power/mirror zoom adds a pause so the camera returns to normal before the next shot fires
+  let acc = SHOT_START_DELAY, pausedTotal = 0;
+  revealShots = data.shots.map((s, i) => {
+    const fireTime = acc;
+    acc += SHOT_INTERVAL + (shotHasZoom(s) ? POWER_PAUSE : 0);
+    if (shotHasZoom(s)) pausedTotal += POWER_PAUSE;
+    return { ...s, fireTime, triggered: false };
+  });
 
   buildOrderTable(data);
 
@@ -1403,7 +1417,7 @@ socket.on('roundResult', data => {
   revealClock = 0;
   revealActive = true;
 
-  const bannerDelay = SHOT_START_DELAY + data.shots.length * SHOT_INTERVAL + 900;
+  const bannerDelay = SHOT_START_DELAY + data.shots.length * SHOT_INTERVAL + pausedTotal + 900;
   setTimeout(() => {
     const names = data.eliminated.map(id => {
       const pl = data.players.find(p => p.id === id);
