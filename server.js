@@ -11,7 +11,8 @@ app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: res => res.setHeader('Cache-Control', 'no-cache')
 }));
 
-const PLACE_DURATION = 45000; // ms to pick a card, walk & aim each round
+const CARD_PICK_DURATION = 10000; // ms to choose 1 of 3 dealt cards
+const PLACE_DURATION = 20000; // ms to walk, aim & aim the chosen card
 const NEXT_ROUND_DELAY = 3000; // pause after reveal before next round starts
 const HIT_WIDTH = 0.3; // base perpendicular tolerance of a shot
 const MIN_ISLAND_SIZE = 6;
@@ -252,32 +253,79 @@ class Room {
     this.startRound();
   }
 
+  // Phase 1: deal each player 3 random cards to choose 1 from (10s)
   startRound() {
     this.round += 1;
+    this.state = 'cardpick';
+    const half = this.islandSize / 2 - 0.6;
+    const aliveList = [...this.players.values()].filter(p => p.alive);
+    for (const p of aliveList) {
+      p.ready = false;
+      p.shotTargetId = null;
+      p.card = null;
+      p.cardTarget = null;
+      p.cardArea = null;
+      // deal 3 distinct random cards to choose from
+      const pool = CARD_IDS.slice();
+      p.cardChoices = [];
+      for (let i = 0; i < 3 && pool.length; i++) p.cardChoices.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+      // bots choose one of their 3 immediately
+      if (p.isBot) p.card = p.cardChoices[Math.floor(Math.random() * p.cardChoices.length)];
+    }
+    this.roundEndsAt = Date.now() + CARD_PICK_DURATION;
+    const roster = aliveList.map(p => ({ id: p.id, name: p.name, color: p.color }));
+    io.to(this.code).emit('roundStart', {
+      phase: 'cardpick',
+      round: this.round,
+      islandSize: this.islandSize,
+      duration: CARD_PICK_DURATION,
+      endsAt: this.roundEndsAt,
+      bounds: half,
+      roster
+    });
+    for (const p of aliveList) {
+      if (!p.isBot) io.to(p.id).emit('yourChoices', { choices: p.cardChoices });
+    }
+    clearTimeout(this.timer);
+    this.maybeBeginPlacement();
+    if (this.state === 'cardpick') this.timer = setTimeout(() => this.beginPlacement(), CARD_PICK_DURATION);
+  }
+
+  pickCard(id, card) {
+    if (this.state !== 'cardpick') return;
+    const p = this.players.get(id);
+    if (!p || !p.alive || !p.cardChoices || !p.cardChoices.includes(card)) return;
+    p.card = card;
+    io.to(id).emit('cardPicked', { card });
+    this.maybeBeginPlacement();
+  }
+
+  maybeBeginPlacement() {
+    const alive = [...this.players.values()].filter(p => p.alive);
+    if (alive.length > 0 && alive.every(p => p.card)) {
+      clearTimeout(this.timer);
+      this.beginPlacement();
+    }
+  }
+
+  // Phase 2: with the chosen card, walk / aim / aim the card (20s)
+  beginPlacement() {
+    if (this.state !== 'cardpick') return;
     this.state = 'placing';
     const half = this.islandSize / 2 - 0.6;
     const aliveList = [...this.players.values()].filter(p => p.alive);
-    for (const p of this.players.values()) {
-      if (!p.alive) continue;
+    for (const p of aliveList) {
+      if (!p.card) p.card = p.cardChoices[Math.floor(Math.random() * p.cardChoices.length)]; // auto-pick if idle
       p.ready = false;
-      p.shotTargetId = null;
-      // deal a fresh random special card each round
-      p.card = CARD_IDS[Math.floor(Math.random() * CARD_IDS.length)];
-      p.cardTarget = null;
-      p.cardArea = null;
       if (p.isBot) {
-        // bots decide their final hiding spot right away; nobody can see them move anyway
         this.decideBotMove(p, half);
         p.ready = true;
         if (AREA_CARDS.has(p.card)) {
-          // bots drop their area card at a random spot
           p.cardArea = { x: (Math.random() * 2 - 1) * half, z: (Math.random() * 2 - 1) * half };
         } else {
-          // bots play their card on a random alive player (possibly themselves)
           p.cardTarget = aliveList[Math.floor(Math.random() * aliveList.length)].id;
         }
       } else {
-        // small random jitter around center so overlapping spawns aren't identical
         p.x = (Math.random() - 0.5) * 1.5;
         p.z = (Math.random() - 0.5) * 1.5;
         p.angle = Math.random() * Math.PI * 2;
@@ -285,7 +333,7 @@ class Room {
     }
     this.roundEndsAt = Date.now() + PLACE_DURATION;
     const roster = aliveList.map(p => ({ id: p.id, name: p.name, color: p.color }));
-    io.to(this.code).emit('roundStart', {
+    io.to(this.code).emit('placeStart', {
       round: this.round,
       islandSize: this.islandSize,
       duration: PLACE_DURATION,
@@ -293,21 +341,19 @@ class Room {
       bounds: half,
       roster
     });
-    // privately tell each real player which card they were dealt this round
     for (const p of aliveList) {
       if (!p.isBot) io.to(p.id).emit('yourCard', { card: p.card });
     }
     io.to(this.spectatorRoom).emit('spectateSnapshot', {
       round: this.round,
-      players: [...this.players.values()].filter(p => p.alive).map(p => ({
+      players: aliveList.map(p => ({
         id: p.id, name: p.name, color: p.color, hat: p.hat, back: p.back,
         x: p.x, z: p.z, angle: p.angle
       }))
     });
     this.broadcastReady();
     clearTimeout(this.timer);
-    const alive = [...this.players.values()].filter(p => p.alive);
-    if (alive.length > 0 && alive.every(p => p.ready)) {
+    if (aliveList.length > 0 && aliveList.every(p => p.ready)) {
       this.timer = setTimeout(() => this.resolveRound(), 400);
     } else {
       this.timer = setTimeout(() => this.resolveRound(), PLACE_DURATION);
@@ -680,6 +726,12 @@ io.on('connection', socket => {
     const room = rooms.get(currentRoomCode);
     if (!room) return;
     room.setReady(socket.id);
+  });
+
+  socket.on('pickCard', ({ card }) => {
+    const room = rooms.get(currentRoomCode);
+    if (!room) return;
+    room.pickCard(socket.id, card);
   });
 
   socket.on('useCard', ({ targetId }) => {

@@ -993,7 +993,9 @@ canvas.addEventListener('click', e => {
 
 let selfColor = '#3498db';
 let placing = false;
+let phase = 'placing'; // 'cardpick' (choose 1 of 3) | 'placing' (walk/aim/use card)
 
+// Phase 1: choose 1 of 3 dealt cards
 socket.on('roundStart', data => {
   currentIslandSize = buildIsland(data.islandSize);
   bounds = data.bounds;
@@ -1001,47 +1003,99 @@ socket.on('roundStart', data => {
   $('roundValue').textContent = data.round;
   $('islandValue').textContent = Math.round(data.islandSize);
 
-  // clear previous reveal meshes
   clearRevealMeshes();
   clearSpectatorMeshes();
-
   if (selfMesh) { scene.remove(selfMesh); selfMesh = null; }
   if (selfLaser) { scene.remove(selfLaser); selfLaser = null; }
 
+  phase = 'cardpick';
+  placing = false;
   spectating = !selfAlive;
-  placing = true;
   selfReady = false;
   readyCount = 0;
   readyTotal = 0;
+  myCard = null;
+  myCardTarget = null;
+  myCardArea = null;
+  clearAreaMarker();
+  clearObstacles();
+  roster = data.roster || [];
+  roster.forEach(pl => playerInfo.set(pl.id, { name: pl.name, color: pl.color }));
+  roundEndsAt = data.endsAt;
+
   showScreen('game');
   $('btnEndGame').classList.toggle('hidden', !isHost);
   $('banner').classList.add('hidden');
   $('eliminatedList').classList.add('hidden');
   $('orderPanel').classList.add('hidden');
+  $('cardLog').classList.add('hidden');
+  $('choiceOverlay').classList.add('hidden');
   clearInterval(orderShuffleTimer);
-  roundEndsAt = data.endsAt;
+  if (data.round === 1) { revealedPowers.clear(); renderPowerLog(); }
 
-  // fresh card for the round; roster used for the target picker
-  roster = data.roster || [];
-  myCardTarget = null;
-  myCardArea = null;
-  clearAreaMarker();
-  clearObstacles();
-  roster.forEach(pl => playerInfo.set(pl.id, { name: pl.name, color: pl.color }));
-  $('cardLog').classList.add('hidden'); // per-round card list only shows during the reveal
-  if (data.round === 1) { revealedPowers.clear(); renderPowerLog(); } // new match -> clear power log
+  // neutral overview while choosing
+  camera.position.set(0, data.islandSize * 0.7 + 7, data.islandSize * 0.6 + 7);
+  camera.lookAt(0, 0, 0);
 
   if (spectating) {
-    // dead players don't pick cards — keep the side panel hidden during placement
-    $('orderPanel').classList.add('hidden');
+    $('instructions').textContent = '👻 คุณตกรอบแล้ว รอผู้เล่นที่เหลือเลือกการ์ด...';
+  } else {
+    $('instructions').textContent = '🃏 เลือกการ์ด 1 ใบจาก 3 ใบ';
+  }
+});
+
+socket.on('yourChoices', data => {
+  if (spectating || phase !== 'cardpick') return;
+  buildChoiceOverlay(data.choices || []);
+});
+
+socket.on('cardPicked', data => { myCard = data.card; });
+
+function buildChoiceOverlay(choices) {
+  const el = $('choiceCards');
+  el.innerHTML = '';
+  choices.forEach(cid => {
+    const c = cardById(cid);
+    if (!c) return;
+    const div = document.createElement('div');
+    div.className = 'choiceCard';
+    div.innerHTML = `<div class="ccEmoji">${c.emoji}</div>
+      <div class="ccName">${c.name}</div>
+      <div class="ccDesc">${c.desc}</div>`;
+    div.addEventListener('click', () => {
+      if (phase !== 'cardpick') return;
+      myCard = cid;
+      socket.emit('pickCard', { card: cid });
+      [...el.children].forEach(ch => ch.classList.remove('chosen'));
+      div.classList.add('chosen');
+    });
+    el.appendChild(div);
+  });
+  $('choiceOverlay').classList.remove('hidden');
+}
+
+// Phase 2: with the chosen card, walk / aim / aim the card
+socket.on('placeStart', data => {
+  phase = 'placing';
+  placing = true;
+  spectating = !selfAlive;
+  selfReady = false;
+  readyCount = 0;
+  readyTotal = 0;
+  bounds = data.bounds;
+  roundEndsAt = data.endsAt;
+  roster = data.roster || roster;
+  $('choiceOverlay').classList.add('hidden');
+  $('orderPanel').classList.add('hidden');
+  clearInterval(orderShuffleTimer);
+
+  if (spectating) {
     spectateCamTarget.set(0, data.islandSize * 0.85 + 6, data.islandSize * 0.6 + 4);
     $('instructions').textContent = '👻 คุณตกรอบแล้ว กำลังดูผู้เล่นที่เหลือหาที่กำบัง...';
   } else {
-    $('instructions').textContent = 'WASD เดิน • เมาส์เล็งทิศ • คลิกชื่อด้านขวาเพื่อใช้การ์ด • SPACE ยืนยัน';
-    // find own color from last roomUpdate players list (fallback)
+    $('instructions').textContent = 'WASD เดิน • เมาส์เล็งทิศ • ใช้การ์ดด้านขวา • SPACE ยืนยัน';
     selfPos.set((Math.random() - 0.5) * 1, 0, (Math.random() - 0.5) * 1);
     selfAngle = Math.random() * Math.PI * 2;
-
     selfMesh = makePlayerMesh(selfColor, true, selfHat, selfBack);
     scene.add(selfMesh);
     selfLaser = makeLaser(selfColor);
@@ -1490,6 +1544,13 @@ const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, clock.getDelta());
+  if (phase === 'cardpick') {
+    const secs = Math.ceil(Math.max(0, roundEndsAt - Date.now()) / 1000);
+    const tEl = $('timerValue');
+    tEl.textContent = secs;
+    tEl.classList.toggle('warn', secs <= 3);
+    $('choiceCountdown').textContent = secs;
+  }
   updatePlacement(dt);
   updateSpectate(dt);
   updateReveal(dt);
