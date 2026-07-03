@@ -41,9 +41,15 @@ const CARDS = [
   { id: 'divine', emoji: '😇', name: 'ลูกซองแฉก', desc: 'กระสุนเป้าแตกเป็นแฉก 30° ยิงออกสองนัด' },
   { id: 'bounce', emoji: '🎾', name: 'กระสุนเด้ง', desc: 'กระสุนเป้าเด้งได้ 1 ครั้งแบบสุ่ม' },
   { id: 'thunder', emoji: '⚡', name: 'ฟ้าฝนไม่เป็นใจ', desc: '50% ปืนขัดข้อง / 50% ปล่อยสายฟ้ารอบตัว 1 บล็อก' },
-  { id: 'mirror', emoji: '🪞', name: 'กระจกหกด้าน', desc: 'เป้าได้เกราะหนาม สะท้อนกระสุนกลับไปหาคนยิง' }
+  { id: 'mirror', emoji: '🪞', name: 'กระจกหกด้าน', desc: 'เป้าได้เกราะหนาม สะท้อนกระสุนกลับไปหาคนยิง' },
+  { id: 'wall', emoji: '🧱', name: 'กำแพงกันดิน', desc: 'พื้นที่: วางกำแพง 1×3 บล็อก บังกระสุนไม่ให้ผ่าน' },
+  { id: 'cyclone', emoji: '🌀', name: 'ลมหมุน', desc: 'พื้นที่: วางไซโคลน 2×2 บล็อก กระสุนที่ผ่านจะเปลี่ยนทิศแบบสุ่ม' },
+  { id: 'firework', emoji: '🎆', name: 'พลุไฟ', desc: 'พื้นที่: วางพลุ 1×1 บล็อก ถ้ากระสุนโดน ระเบิดฆ่าทุกคนในระยะ 3×3' }
 ];
 const cardById = id => CARDS.find(c => c.id === id) || null;
+const AREA_CARD_IDS = new Set(['wall', 'cyclone', 'firework']);
+const isAreaCard = id => AREA_CARD_IDS.has(id);
+let myCardArea = null; // where I placed my area card this round
 let roster = [];        // alive players this round (for the card target picker)
 let myCard = null;      // the card I was dealt this round
 let myCardTarget = null; // whom I aimed my card at
@@ -682,8 +688,8 @@ function spawnFlash(x, y, z, baseScale, color, duration) {
 function spawnSegmentBullet(color, segments, radius) {
   if (!segments || !segments.length) return;
   const pts = [new THREE.Vector3(segments[0].x1, 0.55, segments[0].z1)];
-  const hitAt = [null];
-  segments.forEach(sg => { pts.push(new THREE.Vector3(sg.x2, 0.55, sg.z2)); hitAt.push(sg.hitId || null); });
+  const hitAt = [null], explodeAt = [null];
+  segments.forEach(sg => { pts.push(new THREE.Vector3(sg.x2, 0.55, sg.z2)); hitAt.push(sg.hitId || null); explodeAt.push(sg.explode || null); });
   const cum = [0];
   for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
   const geo = new THREE.SphereGeometry(radius, 12, 12);
@@ -699,7 +705,7 @@ function spawnSegmentBullet(color, segments, radius) {
   glow.scale.setScalar(radius * 4);
   glow.position.copy(pts[0]);
   scene.add(glow);
-  fxBullets.push({ mesh, glow, pts, cum, hitAt, total: cum[cum.length - 1], dist: 0, nextIdx: 1 });
+  fxBullets.push({ mesh, glow, pts, cum, hitAt, explodeAt, total: cum[cum.length - 1], dist: 0, nextIdx: 1 });
 }
 
 // The Thunder VFX: bright bolt glow at the caster plus sparks across the kill radius
@@ -709,6 +715,66 @@ function spawnLightning(entry) {
     const a = Math.random() * Math.PI * 2, r = Math.random() * THUNDER_RADIUS_C;
     spawnFlash(entry.x + Math.cos(a) * r, 0.4, entry.z + Math.sin(a) * r, 0.6, 0xdff0ff, 0.4);
   }
+}
+
+// พลุไฟ blast: big fiery burst + kill everyone in the 3x3 block
+function spawnExplosion(ex) {
+  spawnFlash(ex.x, 0.8, ex.z, 3.2, 0xffb040, 0.6);
+  spawnFlash(ex.x, 1.4, ex.z, 2.2, 0xffe38a, 0.5);
+  for (let i = 0; i < 14; i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * 1.5;
+    spawnFlash(ex.x + Math.cos(a) * r, 0.4, ex.z + Math.sin(a) * r, 0.7, 0xff7a2a, 0.45);
+  }
+  (ex.victims || []).forEach(id => killVictim(id));
+}
+
+// ---------- Area-card obstacles (กำแพงกันดิน / ลมหมุน / พลุไฟ) ----------
+let areaMarker = null;      // my own placement ghost during the placement phase
+let obstacleMeshes = [];    // reveal-phase obstacle meshes
+
+function areaBox(type, x, z) {
+  if (type === 'wall') {
+    const longZ = Math.abs(x) >= Math.abs(z);
+    return { type, x, z, minX: x - (longZ ? 0.5 : 1.5), maxX: x + (longZ ? 0.5 : 1.5), minZ: z - (longZ ? 1.5 : 0.5), maxZ: z + (longZ ? 1.5 : 0.5) };
+  }
+  const h = type === 'cyclone' ? 1.0 : 0.5;
+  return { type, x, z, minX: x - h, maxX: x + h, minZ: z - h, maxZ: z + h };
+}
+
+function makeObstacleMesh(o, ghost) {
+  const g = new THREE.Group();
+  if (o.type === 'wall') {
+    const box = new THREE.Mesh(new THREE.BoxGeometry(o.maxX - o.minX, 1.2, o.maxZ - o.minZ),
+      new THREE.MeshStandardMaterial({ color: 0xa5825f, transparent: !!ghost, opacity: ghost ? 0.4 : 1 }));
+    box.position.y = 0.6; g.add(box);
+  } else if (o.type === 'cyclone') {
+    const r = (o.maxX - o.minX) / 2;
+    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.5, r, 1.9, 22, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x6fd0e8, transparent: true, opacity: ghost ? 0.25 : 0.42, side: THREE.DoubleSide }));
+    cyl.position.y = 0.95; g.add(cyl);
+    g.userData.spin = true;
+  } else {
+    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.5, 8),
+      new THREE.MeshStandardMaterial({ color: 0x7a4a2a }));
+    stick.position.y = 0.25; g.add(stick);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 12),
+      new THREE.MeshStandardMaterial({ color: 0xffcc33, emissive: 0xaa7711, transparent: !!ghost, opacity: ghost ? 0.5 : 1 }));
+    bulb.position.y = 0.62; g.add(bulb);
+  }
+  g.position.set(o.x, 0, o.z);
+  return g;
+}
+
+function placeAreaMarker(type, x, z) {
+  clearAreaMarker();
+  areaMarker = makeObstacleMesh(areaBox(type, x, z), true);
+  scene.add(areaMarker);
+}
+function clearAreaMarker() { if (areaMarker) { scene.remove(areaMarker); areaMarker = null; } }
+function clearObstacles() { obstacleMeshes.forEach(m => scene.remove(m)); obstacleMeshes = []; }
+function buildObstacles(list) {
+  clearObstacles();
+  (list || []).forEach(o => { const m = makeObstacleMesh(o, false); scene.add(m); obstacleMeshes.push(m); });
 }
 
 function makeBloodDecal() {
@@ -763,9 +829,10 @@ function updateFx(dt) {
   for (let i = fxBullets.length - 1; i >= 0; i--) {
     const b = fxBullets[i];
     b.dist += BULLET_SPEED * dt;
-    // trigger the kill on any victim tagged at a vertex we've now passed
+    // trigger the kill / firework blast at any vertex we've now passed
     while (b.nextIdx < b.pts.length && b.dist >= b.cum[b.nextIdx]) {
       if (b.hitAt[b.nextIdx]) killVictim(b.hitAt[b.nextIdx]);
+      if (b.explodeAt[b.nextIdx]) spawnExplosion(b.explodeAt[b.nextIdx]);
       b.nextIdx++;
     }
     if (b.dist >= b.total) { scene.remove(b.mesh); scene.remove(b.glow); fxBullets.splice(i, 1); continue; }
@@ -907,6 +974,23 @@ window.addEventListener('mousemove', e => {
   mouseNdc.y = -(e.clientY / window.innerHeight) * 2 + 1;
 });
 
+// click on the field to place an area card (กำแพงกันดิน / ลมหมุน / พลุไฟ)
+canvas.addEventListener('click', e => {
+  if (!placing || selfReady || spectating || !isAreaCard(myCard)) return;
+  const ndc = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const hit = new THREE.Vector3();
+  if (raycaster.ray.intersectPlane(groundPlane, hit)) {
+    const lim = currentIslandSize / 2 - 0.5;
+    const x = Math.max(-lim, Math.min(lim, hit.x));
+    const z = Math.max(-lim, Math.min(lim, hit.z));
+    myCardArea = { x, z };
+    socket.emit('useCardArea', { x, z });
+    placeAreaMarker(myCard, x, z);
+    updateCardHeader();
+  }
+});
+
 let selfColor = '#3498db';
 let placing = false;
 
@@ -940,6 +1024,9 @@ socket.on('roundStart', data => {
   // fresh card for the round; roster used for the target picker
   roster = data.roster || [];
   myCardTarget = null;
+  myCardArea = null;
+  clearAreaMarker();
+  clearObstacles();
   roster.forEach(pl => playerInfo.set(pl.id, { name: pl.name, color: pl.color }));
   $('cardLog').classList.add('hidden'); // per-round card list only shows during the reveal
   if (data.round === 1) { revealedPowers.clear(); renderPowerLog(); } // new match -> clear power log
@@ -967,7 +1054,8 @@ socket.on('roundStart', data => {
 
 socket.on('yourCard', data => {
   myCard = data.card;
-  if (placing && !spectating) updateCardHeader();
+  // rebuild the picker now that we know the card (roster vs. area-placement note)
+  if (placing && !spectating) buildCardPicker();
 });
 
 socket.on('cardTargetSet', data => {
@@ -1057,6 +1145,7 @@ function clearRevealMeshes() {
   fxBullets.forEach(f => { scene.remove(f.mesh); scene.remove(f.glow); }); fxBullets = [];
   fxLabels.forEach(l => scene.remove(l.sp)); fxLabels = [];
   revealDecals.forEach(d => scene.remove(d)); revealDecals = [];
+  clearObstacles();
   zoomFocus = null;
   revealActive = false;
 }
@@ -1069,10 +1158,13 @@ function updateCardHeader() {
   const c = cardById(myCard);
   if (!c) { el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
+  const hint = isAreaCard(myCard)
+    ? (myCardArea ? '✅ วางแล้ว! คลิกที่อื่นเพื่อย้าย' : 'คลิกบนสนามเพื่อวางการ์ด • ไม่วาง = สุ่มจุดให้')
+    : 'คลิกชื่อด้านล่างเพื่อเลือกเป้า • ไม่เลือก = สุ่มให้';
   el.innerHTML = `<div class="cardEmoji">${c.emoji}</div>
     <div class="cardName">${c.name}</div>
     <div class="cardDesc">${c.desc}</div>
-    <div class="cardHint">คลิกชื่อด้านล่างเพื่อเลือกเป้า • ไม่เลือก = สุ่มให้</div>`;
+    <div class="cardHint">${hint}</div>`;
 }
 
 function refreshPickHighlight() {
@@ -1090,6 +1182,16 @@ function buildCardPicker() {
   clearInterval(orderShuffleTimer);
   $('orderPanelTitle').textContent = '🃏 การ์ดรอบนี้';
   updateCardHeader();
+  // area cards are placed on the field, not on a player — no roster to pick from
+  if (isAreaCard(myCard)) {
+    const note = document.createElement('li');
+    note.className = 'orderRow';
+    note.style.justifyContent = 'center';
+    note.innerHTML = '<span class="orderName" style="text-align:center">🖱️ คลิกบนสนามเพื่อวางการ์ด</span>';
+    listEl.appendChild(note);
+    $('orderPanel').classList.remove('hidden');
+    return;
+  }
   roster.forEach(pl => {
     const li = document.createElement('li');
     li.className = 'orderRow pickRow';
@@ -1214,6 +1316,8 @@ socket.on('roundResult', data => {
   data.players.forEach(p => playerInfo.set(p.id, { name: p.name, color: p.color }));
   buildCardLog(data);       // which cards were played on whom this round (left)
   renderPowerLog();         // keep the revealed-powers list up to date (left)
+  clearAreaMarker();        // remove my placement ghost; show the real obstacles instead
+  buildObstacles(data.obstacles);
 
   data.players.forEach(p => {
     const size = p.size || 1;
@@ -1303,6 +1407,8 @@ function updateReveal(dt) {
       entry.mesh.rotation.x = THREE.MathUtils.lerp(entry.mesh.rotation.x, 0, dt * 6);
     }
   });
+
+  obstacleMeshes.forEach(m => { if (m.userData.spin) m.rotation.y += dt * 4; }); // swirl the cyclones
 
   updateFx(dt);
 }

@@ -18,9 +18,35 @@ const MIN_ISLAND_SIZE = 6;
 const SHRINK_FACTOR = 0.8;
 
 // ---- Special cards (dealt one per player each round) ----
-const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror'];
+// player-target cards + area cards (placed on the ground instead of a player)
+const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror', 'wall', 'cyclone', 'firework'];
+const AREA_CARDS = new Set(['wall', 'cyclone', 'firework']);
 const FORK_ANGLE = 0.2618; // 15deg -> two bullets 30deg apart (The Divine)
 const THUNDER_RADIUS = 1.6; // ~1 block kill radius (The Thunder)
+const FIREWORK_KILL = 1.5; // half-size of the 3x3 block explosion
+
+// build an axis-aligned obstacle box for an area card at (x,z)
+function makeObstacle(i, type, x, z) {
+  if (type === 'wall') {
+    // 1x3 wall, oriented so the long side is tangential to the field centre (acts as a shield)
+    const longZ = Math.abs(x) >= Math.abs(z);
+    return { i, type, x, z,
+      minX: x - (longZ ? 0.5 : 1.5), maxX: x + (longZ ? 0.5 : 1.5),
+      minZ: z - (longZ ? 1.5 : 0.5), maxZ: z + (longZ ? 1.5 : 0.5), longZ };
+  }
+  const h = type === 'cyclone' ? 1.0 : 0.5; // cyclone 2x2, firework 1x1
+  return { i, type, x, z, minX: x - h, maxX: x + h, minZ: z - h, maxZ: z + h };
+}
+// entry distance where ray (ox,oz)+t(dx,dz) enters an AABB, or null if it misses
+function rayAABB(ox, oz, dx, dz, minX, maxX, minZ, maxZ) {
+  let tmin = -Infinity, tmax = Infinity;
+  if (Math.abs(dx) < 1e-9) { if (ox < minX || ox > maxX) return null; }
+  else { let a = (minX - ox) / dx, b = (maxX - ox) / dx; if (a > b) [a, b] = [b, a]; tmin = Math.max(tmin, a); tmax = Math.min(tmax, b); }
+  if (Math.abs(dz) < 1e-9) { if (oz < minZ || oz > maxZ) return null; }
+  else { let a = (minZ - oz) / dz, b = (maxZ - oz) / dz; if (a > b) [a, b] = [b, a]; tmin = Math.max(tmin, a); tmax = Math.min(tmax, b); }
+  if (tmax < tmin || tmax < 0) return null;
+  return tmin > 0 ? tmin : 0;
+}
 // size multipliers for Go Big / Go Small (10% chance of the extreme version)
 function goBigScale() { return Math.random() < 0.1 ? 3.0 : 1.7; }
 function goSmallScale() { return Math.random() < 0.1 ? 0.3 : 0.55; }
@@ -177,6 +203,15 @@ class Room {
     io.to(id).emit('cardTargetSet', { targetId });
   }
 
+  setCardArea(id, x, z) {
+    if (this.state !== 'placing') return;
+    const p = this.players.get(id);
+    if (!p || !p.alive || p.ready || !AREA_CARDS.has(p.card)) return;
+    const lim = this.islandSize / 2 - 0.5;
+    p.cardArea = { x: Math.max(-lim, Math.min(lim, x)), z: Math.max(-lim, Math.min(lim, z)) };
+    io.to(id).emit('cardAreaSet', p.cardArea);
+  }
+
   decideBotMove(bot, half) {
     bot.x = (Math.random() * 2 - 1) * half;
     bot.z = (Math.random() * 2 - 1) * half;
@@ -229,12 +264,18 @@ class Room {
       // deal a fresh random special card each round
       p.card = CARD_IDS[Math.floor(Math.random() * CARD_IDS.length)];
       p.cardTarget = null;
+      p.cardArea = null;
       if (p.isBot) {
         // bots decide their final hiding spot right away; nobody can see them move anyway
         this.decideBotMove(p, half);
         p.ready = true;
-        // bots play their card on a random alive player (possibly themselves)
-        p.cardTarget = aliveList[Math.floor(Math.random() * aliveList.length)].id;
+        if (AREA_CARDS.has(p.card)) {
+          // bots drop their area card at a random spot
+          p.cardArea = { x: (Math.random() * 2 - 1) * half, z: (Math.random() * 2 - 1) * half };
+        } else {
+          // bots play their card on a random alive player (possibly themselves)
+          p.cardTarget = aliveList[Math.floor(Math.random() * aliveList.length)].id;
+        }
       } else {
         // small random jitter around center so overlapping spawns aren't identical
         p.x = (Math.random() - 0.5) * 1.5;
@@ -296,8 +337,19 @@ class Room {
     //    and accumulate the per-player effects it produces.
     const fx = new Map(); // id -> { size, fork, bounce, thunder, mirror }
     for (const p of alive) fx.set(p.id, { size: 1, fork: false, bounce: false, thunder: false, mirror: false });
-    const cards = []; // who cast what on whom (for the reveal display)
+    const cards = []; // player-target cards (for the reveal display)
+    const obstacles = []; // area cards placed on the field
+    const areaLim = fieldHalf - 0.5;
     for (const caster of alive) {
+      // area cards drop an obstacle on the field instead of hitting a player
+      if (AREA_CARDS.has(caster.card)) {
+        let a = caster.cardArea;
+        if (!a) a = { x: (Math.random() * 2 - 1) * areaLim, z: (Math.random() * 2 - 1) * areaLim };
+        a = { x: Math.max(-areaLim, Math.min(areaLim, a.x)), z: Math.max(-areaLim, Math.min(areaLim, a.z)) };
+        caster.cardArea = a;
+        obstacles.push(makeObstacle(obstacles.length, caster.card, a.x, a.z));
+        continue;
+      }
       let targetId = caster.cardTarget;
       if (!targetId || !aliveMap.has(targetId)) {
         targetId = alive[Math.floor(Math.random() * alive.length)].id;
@@ -324,7 +376,7 @@ class Room {
     // after a Mirror reflection so the shot can fly back into the original shooter.
     // The Matrix lets its owner dodge the first hit of the match (bullet floats past to whoever's
     // behind) — but a Mirror card on that target overrides the dodge (card beats power).
-    const castSegment = (ox, oz, ang, shooter, selfId, excludeIds, dodgeOut) => {
+    const castSegment = (ox, oz, ang, shooter, selfId, excludeIds, excludeObs, dodgeOut) => {
       const dx = Math.sin(ang), dz = Math.cos(ang);
       const cands = [];
       for (const t of alive) {
@@ -337,38 +389,67 @@ class Room {
       }
       cands.sort((a, b) => a.fwd - b.fwd);
       const exitDist = rayExit(ox, oz, dx, dz, fieldHalf);
+      // nearest area-card obstacle along the ray
+      let obs = null, obsT = Infinity;
+      for (const o of obstacles) {
+        if (excludeObs.has(o.i)) continue;
+        const t = rayAABB(ox, oz, dx, dz, o.minX, o.maxX, o.minZ, o.maxZ);
+        if (t != null && t > 0.02 && t < obsT) { obsT = t; obs = o; }
+      }
+      const obsPoint = () => ({ type: obs.type, obs, x: ox + dx * obsT, z: oz + dz * obsT, exited: false });
       for (const c of cands) {
         if (c.fwd > exitDist) break;
+        if (obs && obsT <= c.fwd) return obsPoint(); // obstacle stands between us and this player
         const t = c.t;
         if (t.power === 'matrix' && !t.matrixUsed && !fx.get(t.id).mirror) {
           t.matrixUsed = true;
           dodgeOut.push(t.id);
           continue; // dodged
         }
-        return { hitId: t.id, x: t.x, z: t.z, exited: false };
+        return { type: 'player', hitId: t.id, x: t.x, z: t.z, exited: false };
       }
+      if (obs && obsT < exitDist) return obsPoint();
       const d = Math.min(exitDist, 40);
-      return { hitId: null, x: ox + dx * d, z: oz + dz * d, exited: exitDist < 40 };
+      return { type: 'miss', hitId: null, x: ox + dx * d, z: oz + dz * d, exited: exitDist < 40 };
     };
 
-    // resolve one bullet (bounces / MAN ricochets / Mirror reflections), collecting kills + events
+    // resolve one bullet (bounces / MAN ricochets / Mirror reflections / area obstacles), collecting kills + events
     const fireBullet = (shooter, a0, bounces, kills, ev) => {
       const segments = [];
       const touched = new Set(kills); // never interact with the same player twice on one bullet
+      const touchedObs = new Set();
       let ox = shooter.x, oz = shooter.z, ang = a0, bouncesLeft = bounces, selfId = shooter.id;
-      for (let step = 0; step < 6; step++) {
-        const r = castSegment(ox, oz, ang, shooter, selfId, touched, ev.dodges);
+      for (let step = 0; step < 8; step++) {
+        const r = castSegment(ox, oz, ang, shooter, selfId, touched, touchedObs, ev.dodges);
         const seg = { x1: ox, z1: oz, x2: r.x, z2: r.z, hitId: null };
         segments.push(seg);
-        if (r.hitId) {
+        if (r.type === 'wall') { seg.wall = true; break; } // กำแพงกันดิน blocks the shot
+        if (r.type === 'cyclone') { // ลมหมุน whirls the shot off in a random direction
+          seg.cyclone = true; touchedObs.add(r.obs.i);
+          ox = r.x; oz = r.z; ang = Math.random() * Math.PI * 2;
+          continue;
+        }
+        if (r.type === 'firework') { // พลุไฟ blows up, killing everyone in a 3x3 block
+          seg.firework = true; touchedObs.add(r.obs.i);
+          const victims = [];
+          for (const t of alive) {
+            if (!stillAlive.has(t.id)) continue;
+            if (Math.abs(t.x - r.obs.x) <= FIREWORK_KILL && Math.abs(t.z - r.obs.z) <= FIREWORK_KILL) {
+              victims.push(t.id); kills.add(t.id);
+            }
+          }
+          seg.explode = { x: r.obs.x, z: r.obs.z, victims };
+          break;
+        }
+        if (r.type === 'player') {
           const victim = aliveMap.get(r.hitId);
           // Mirror card: thorn armour bounces the shot straight back at the shooter (card beats power)
           if (fx.get(r.hitId).mirror) {
             seg.mirror = victim.id;
             ev.mirror.push(victim.id);
             touched.add(victim.id);
-            ang = Math.atan2(shooter.x - r.x, shooter.z - r.z); // aim back at the shooter
-            ox = r.x; oz = r.z; selfId = victim.id; // reflected: the shooter is now hittable
+            ang = Math.atan2(shooter.x - r.x, shooter.z - r.z);
+            ox = r.x; oz = r.z; selfId = victim.id;
             continue;
           }
           // The MAN ricochets any shot that strikes his back
@@ -377,16 +458,17 @@ class Room {
             ev.man.push(victim.id);
             touched.add(victim.id);
             ox = r.x; oz = r.z; ang = Math.random() * Math.PI * 2;
-            continue; // survives, does not consume a bounce
+            continue;
           }
           seg.hitId = r.hitId;
           kills.add(r.hitId);
           touched.add(r.hitId);
           if (bouncesLeft > 0) { bouncesLeft--; ox = r.x; oz = r.z; ang = Math.random() * Math.PI * 2; continue; }
           break;
-        } else if (r.exited && bouncesLeft > 0) {
-          bouncesLeft--; ox = r.x; oz = r.z; ang = inwardAngle(r.x, r.z); continue;
-        } else break;
+        }
+        // miss / left the field
+        if (r.exited && bouncesLeft > 0) { bouncesLeft--; ox = r.x; oz = r.z; ang = inwardAngle(r.x, r.z); continue; }
+        break;
       }
       return segments;
     };
@@ -469,6 +551,7 @@ class Room {
         })),
       shots,
       cards,
+      obstacles: obstacles.map(o => ({ type: o.type, x: o.x, z: o.z, minX: o.minX, maxX: o.maxX, minZ: o.minZ, maxZ: o.maxZ, longZ: o.longZ })),
       eliminated,
       survivors: this.aliveIds()
     };
@@ -603,6 +686,12 @@ io.on('connection', socket => {
     const room = rooms.get(currentRoomCode);
     if (!room) return;
     room.setCardTarget(socket.id, targetId);
+  });
+
+  socket.on('useCardArea', ({ x, z }) => {
+    const room = rooms.get(currentRoomCode);
+    if (!room) return;
+    room.setCardArea(socket.id, x, z);
   });
 
   socket.on('playAgain', () => {
