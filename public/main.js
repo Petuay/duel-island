@@ -5,10 +5,12 @@ import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 // ---------- Socket & UI plumbing ----------
 const socket = io();
 
-// ---------- 3D character model (proof-of-concept: real rigged model) ----------
-let charTemplate = null; // { scene, animations }
-const charMixers = []; // { mixer, mesh } — updated each frame, pruned when the mesh leaves the scene
-new GLTFLoader().load('models/RobotExpressive.glb',
+// ---------- 3D character model (proof-of-concept: real model) ----------
+const MODEL_HEIGHT = 1.35;   // world height the model is scaled to fit
+const MODEL_FACE_Y = 0;      // extra yaw so the model faces its aim (+Z); flip to Math.PI if backwards
+let charTemplate = null;     // { scene, animations }
+const charMixers = [];       // { mixer, mesh } — updated each frame, pruned when the mesh leaves the scene
+new GLTFLoader().load('models/character.glb',
   gltf => { charTemplate = { scene: gltf.scene, animations: gltf.animations }; },
   undefined,
   err => console.warn('[char] model load failed, falling back to blocks', err));
@@ -505,20 +507,24 @@ function makePlayerMesh(color, isSelf, hat, back) {
   return group;
 }
 
-// clone the loaded rigged model, tint it to the player colour, and start its idle loop
+// clone the loaded model, auto-fit it to the game's player size, and (if rigged) start its idle loop
 function makeCharMesh(color) {
   const group = new THREE.Group();
+  const inner = new THREE.Group();       // holds the model so we can offset/scale it without touching the group
   const model = skeletonClone(charTemplate.scene);
-  model.scale.setScalar(0.34);            // fit the model to the game's player size (tune as needed)
-  model.rotation.y = 0;                    // face forward (+Z, the aim/shoot direction)
-  model.traverse(o => {
-    if (o.isMesh) {
-      o.castShadow = true;
-      o.material = o.material.clone();     // per-instance material so tinting doesn't affect other players
-      if (/main/i.test(o.material.name || '')) o.material.color.set(color);
-    }
-  });
-  group.add(model);
+  model.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  inner.add(model);
+
+  // auto scale to MODEL_HEIGHT and drop it so the feet sit on the ground (y=0), centred on x/z
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3(), center = new THREE.Vector3();
+  box.getSize(size); box.getCenter(center);
+  const s = MODEL_HEIGHT / (size.y || 1);
+  model.scale.setScalar(s);
+  model.position.set(-center.x * s, -box.min.y * s, -center.z * s);
+  inner.rotation.y = MODEL_FACE_Y;
+  group.add(inner);
+  group.userData.model = inner;
 
   // coloured base ring so each player's colour is easy to read from above
   const base = new THREE.Mesh(
