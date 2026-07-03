@@ -510,7 +510,7 @@ function makeCharMesh(color) {
   const group = new THREE.Group();
   const model = skeletonClone(charTemplate.scene);
   model.scale.setScalar(0.34);            // fit the model to the game's player size (tune as needed)
-  model.rotation.y = Math.PI;             // face forward (+Z, the aim direction)
+  model.rotation.y = 0;                    // face forward (+Z, the aim/shoot direction)
   model.traverse(o => {
     if (o.isMesh) {
       o.castShadow = true;
