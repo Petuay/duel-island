@@ -282,52 +282,11 @@ function loadTex(name) {
   return t;
 }
 const PAINTED = {
-  floor: { tex: loadTex('floor.webp') },
-  cloudFrags: [
-    { tex: loadTex('cloudfrag0.webp'), aspect: 560 / 542 },
-    { tex: loadTex('cloudfrag1.webp'), aspect: 511 / 557 },
-    { tex: loadTex('cloudfrag2.webp'), aspect: 453 / 371 }, // mossy (cloud2) fragment
-    { tex: loadTex('cloudfrag3.webp'), aspect: 393 / 172 },
-    { tex: loadTex('cloudfrag4.webp'), aspect: 181 / 135 },
-    { tex: loadTex('cloudfrag5.webp'), aspect: 166 / 135 }
-  ]
+  floor: { tex: loadTex('floor.webp') }
 };
 
-// Flat pale background, matching the reference art (far outside the ink clouds is plain).
+// Flat pale background, matching the reference art.
 scene.background = new THREE.Color(0xf1e6da);
-
-// Painted ink-cloud fragments lying flat on the ground around the arena, like painted
-// map art (not camera-facing sprites) — matches the reference's top-down ink border.
-// Kept strictly outside `half`, with the floor's renderOrder guaranteeing it draws on
-// top, so the play area is never visually covered no matter the camera angle.
-function addPaintedCloudBorder(group, half) {
-  const defs = PAINTED.cloudFrags;
-  const rng = mulberry32(4242);
-  const perSide = Math.max(4, Math.round(half * 0.9));
-  for (let side = 0; side < 4; side++) {
-    for (let i = 0; i < perSide; i++) {
-      const t = ((i + randRange(rng, -0.35, 0.35)) / (perSide - 1)) * 2 - 1; // -1..1 along the edge
-      const out = half + randRange(rng, 0.9, 2.6);
-      let x = t * half, z = out * (side < 2 ? -1 : 1);
-      if (side % 2 === 1) { x = out * (side === 1 ? 1 : -1); z = t * half; }
-      const def = defs[Math.floor(rng() * defs.length)];
-      const s = randRange(rng, 2.0, 3.8);
-      const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(1, 1),
-        new THREE.MeshBasicMaterial({
-          map: def.tex, transparent: true, opacity: randRange(rng, 0.85, 1),
-          depthWrite: false, side: THREE.DoubleSide
-        })
-      );
-      plane.renderOrder = -1;
-      plane.rotation.x = -Math.PI / 2;
-      plane.rotation.z = rng() * Math.PI * 2;
-      plane.scale.set(s * def.aspect, s, 1);
-      plane.position.set(x, -0.34 - rng() * 0.05, z);
-      group.add(plane);
-    }
-  }
-}
 
 // small stylized decorations that cling to the island rim (pure scenery)
 function makePineTree(x, z) {
@@ -700,8 +659,6 @@ function buildIsland(size) {
   base.receiveShadow = true;
   base.renderOrder = 1;
   islandGroup.add(base);
-
-  addPaintedCloudBorder(islandGroup, half);
 
   scene.add(islandGroup);
   return n;
