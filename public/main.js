@@ -226,16 +226,16 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;      // softer, nicer shadows
 renderer.toneMapping = THREE.ACESFilmicToneMapping;    // cinematic-but-clean tone
-renderer.toneMappingExposure = 0.82; // softer exposure: less blown-out cartoon lighting
+renderer.toneMappingExposure = 0.72; // softer exposure: less blown-out cartoon lighting
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xdce8f2, 48, 140); // soft cloud haze; background set in the scenery setup below
 
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 260);
 
-const hemi = new THREE.HemisphereLight(0xdfeeff, 0x8a826f, 0.72);
+const hemi = new THREE.HemisphereLight(0xeaf4ff, 0x8d8572, 0.86);
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xffefd0, 0.62);
+const sun = new THREE.DirectionalLight(0xfff1d6, 0.48);
 sun.position.set(10, 20, 8);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
@@ -268,7 +268,7 @@ resize();
 try {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.10, 0.38, 0.92));
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.055, 0.28, 0.96));
   composer.addPass(new OutputPass());
   composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   composer.setSize(window.innerWidth, window.innerHeight);
@@ -352,37 +352,71 @@ function makePagoda(x, z) {
 }
 
 
-// ---------- Lightweight cartoon map kit ----------
-// Reuses simple geometry/materials so the island looks richer without loading heavy models.
+
+// ---------- Lightweight stylized rectangular map kit ----------
+// Goal: a square playable arena, slightly more natural/realistic surface,
+// and a Chinese-ink cloud border around the outside without heavy assets.
+const MAP_STYLE = {
+  maxDecor: 92,
+  maxTrees: 28,
+  maxInkClouds: 70,
+  useTinyLights: false // keep false for faster laptops; crystals still glow via emissive material
+};
+
+function mulberry32(seed) {
+  return function () {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function randRange(rng, a, b) { return a + (b - a) * rng(); }
+function randSign(rng) { return rng() > 0.5 ? 1 : -1; }
+function insideSquare(x, z, half, margin = 0) { return Math.abs(x) <= half - margin && Math.abs(z) <= half - margin; }
+
 const MAP_MATS = {
-  grassA: new THREE.MeshStandardMaterial({ color: 0x76c957, roughness: 0.95 }),
-  grassB: new THREE.MeshStandardMaterial({ color: 0x66b84e, roughness: 0.95 }),
-  grassCap: new THREE.MeshStandardMaterial({ color: 0x78c95a, roughness: 1, side: THREE.DoubleSide }),
-  dirt: new THREE.MeshStandardMaterial({ color: 0xc99a57, roughness: 1, side: THREE.DoubleSide }),
-  stone: new THREE.MeshStandardMaterial({ color: 0xa7a08e, roughness: 1, flatShading: true }),
-  stoneDark: new THREE.MeshStandardMaterial({ color: 0x7e7c73, roughness: 1, flatShading: true }),
-  cliff: new THREE.MeshStandardMaterial({ color: 0x8c8c86, roughness: 1, flatShading: true }),
-  pine: new THREE.MeshStandardMaterial({ color: 0x2f7854, roughness: 1, flatShading: true }),
-  trunk: new THREE.MeshStandardMaterial({ color: 0x76512f, roughness: 1, flatShading: true }),
-  bush: new THREE.MeshStandardMaterial({ color: 0x4fa84d, roughness: 1, flatShading: true }),
-  wood: new THREE.MeshStandardMaterial({ color: 0x8a5a32, roughness: 1, flatShading: true }),
-  flowerWhite: new THREE.MeshStandardMaterial({ color: 0xfff5dc, roughness: 1, flatShading: true }),
-  flowerBlue: new THREE.MeshStandardMaterial({ color: 0x6fc7ff, roughness: 1, flatShading: true }),
-  crystal: new THREE.MeshStandardMaterial({ color: 0x62d9ff, emissive: 0x1788bb, emissiveIntensity: 0.65, roughness: 0.45, flatShading: true })
+  grassBase: new THREE.MeshStandardMaterial({ color: 0x6fae55, roughness: 1, metalness: 0 }),
+  grassPatchA: new THREE.MeshStandardMaterial({ color: 0x83bd61, roughness: 1, side: THREE.DoubleSide }),
+  grassPatchB: new THREE.MeshStandardMaterial({ color: 0x537f49, roughness: 1, side: THREE.DoubleSide }),
+  moss: new THREE.MeshStandardMaterial({ color: 0x5f8f48, roughness: 1, side: THREE.DoubleSide }),
+  dirt: new THREE.MeshStandardMaterial({ color: 0xb9894d, roughness: 1, side: THREE.DoubleSide }),
+  dirtLight: new THREE.MeshStandardMaterial({ color: 0xd0a160, roughness: 1, side: THREE.DoubleSide }),
+  stone: new THREE.MeshStandardMaterial({ color: 0x9a988b, roughness: 1, flatShading: true }),
+  stoneLight: new THREE.MeshStandardMaterial({ color: 0xb6b29f, roughness: 1, flatShading: true }),
+  stoneDark: new THREE.MeshStandardMaterial({ color: 0x676a61, roughness: 1, flatShading: true }),
+  cliff: new THREE.MeshStandardMaterial({ color: 0x797b74, roughness: 1, flatShading: true }),
+  cliffDark: new THREE.MeshStandardMaterial({ color: 0x565a55, roughness: 1, flatShading: true }),
+  pineA: new THREE.MeshStandardMaterial({ color: 0x295f43, roughness: 1, flatShading: true }),
+  pineB: new THREE.MeshStandardMaterial({ color: 0x3f7b4d, roughness: 1, flatShading: true }),
+  trunk: new THREE.MeshStandardMaterial({ color: 0x6e4a2d, roughness: 1, flatShading: true }),
+  bush: new THREE.MeshStandardMaterial({ color: 0x4d9145, roughness: 1, flatShading: true }),
+  flowerWhite: new THREE.MeshStandardMaterial({ color: 0xf2ead5, roughness: 1, flatShading: true }),
+  flowerBlue: new THREE.MeshStandardMaterial({ color: 0x78bde8, roughness: 1, flatShading: true }),
+  flowerPink: new THREE.MeshStandardMaterial({ color: 0xd99aaa, roughness: 1, flatShading: true }),
+  wood: new THREE.MeshStandardMaterial({ color: 0x7c5330, roughness: 1, flatShading: true }),
+  crystal: new THREE.MeshStandardMaterial({ color: 0x65d6ff, emissive: 0x1380a6, emissiveIntensity: 0.55, roughness: 0.45, flatShading: true }),
+  inkCloud: new THREE.MeshBasicMaterial({ color: 0xf0eee6, transparent: true, opacity: 0.58, depthWrite: false, side: THREE.DoubleSide }),
+  inkStroke: new THREE.MeshBasicMaterial({ color: 0x252525, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide }),
+  mist: new THREE.MeshBasicMaterial({ color: 0xf7f4ec, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide })
 };
 const MAP_GEO = {
-  tile: new THREE.BoxGeometry(1, 0.72, 1),
-  grassCap: new THREE.CircleGeometry(1, 48),
-  dirt: new THREE.CircleGeometry(1, 20),
+  base: new THREE.BoxGeometry(1, 1, 1),
+  plane: new THREE.PlaneGeometry(1, 1),
+  grassBlob: new THREE.CircleGeometry(1, 18),
+  dirtBlob: new THREE.CircleGeometry(1, 18),
   stoneSlab: new THREE.CylinderGeometry(0.48, 0.5, 0.10, 8),
   pebble: new THREE.DodecahedronGeometry(0.22, 0),
   flower: new THREE.SphereGeometry(0.045, 6, 4),
-  bush: new THREE.DodecahedronGeometry(0.28, 0),
-  trunk: new THREE.CylinderGeometry(0.07, 0.10, 0.45, 6),
-  pineCone: new THREE.ConeGeometry(0.36, 0.45, 7),
-  crystal: new THREE.OctahedronGeometry(0.22, 0)
+  bush: new THREE.DodecahedronGeometry(0.30, 0),
+  trunk: new THREE.CylinderGeometry(0.07, 0.10, 0.48, 6),
+  pineCone: new THREE.ConeGeometry(0.36, 0.46, 7),
+  crystal: new THREE.OctahedronGeometry(0.24, 0),
+  cloudCircle: new THREE.CircleGeometry(1, 24)
 };
-function addFlatDisc(group, geo, mat, x, z, y, sx, sz, rot = 0) {
+
+function addFlat(group, geo, mat, x, z, y, sx, sz, rot = 0) {
   const m = new THREE.Mesh(geo, mat);
   m.rotation.x = -Math.PI / 2;
   m.rotation.z = rot;
@@ -392,32 +426,34 @@ function addFlatDisc(group, geo, mat, x, z, y, sx, sz, rot = 0) {
   group.add(m);
   return m;
 }
-function addCentralStonePlaza(group, radius) {
-  addFlatDisc(group, new THREE.CircleGeometry(radius, 48), MAP_MATS.stone, 0, 0, 0.075, 1, 1);
-  addFlatDisc(group, new THREE.RingGeometry(radius * 0.38, radius * 0.47, 40), MAP_MATS.stoneDark, 0, 0, 0.09, 1, 1);
-  addFlatDisc(group, new THREE.RingGeometry(radius * 0.78, radius * 0.86, 48), MAP_MATS.stoneDark, 0, 0, 0.09, 1, 1);
-  addFlatDisc(group, new THREE.CircleGeometry(radius * 0.18, 24), MAP_MATS.crystal, 0, 0, 0.105, 1, 1);
-  const slabCount = 16;
-  for (let i = 0; i < slabCount; i++) {
-    const a = i / slabCount * Math.PI * 2;
-    const slab = new THREE.Mesh(MAP_GEO.stoneSlab, MAP_MATS.stone);
-    slab.position.set(Math.cos(a) * radius * 0.62, 0.11, Math.sin(a) * radius * 0.62);
+function addStonePlaza(group, half) {
+  const radius = Math.max(1.65, half * 0.28);
+  addFlat(group, new THREE.CircleGeometry(radius, 48), MAP_MATS.stone, 0, 0, 0.092, 1, 1);
+  addFlat(group, new THREE.RingGeometry(radius * 0.36, radius * 0.46, 40), MAP_MATS.stoneDark, 0, 0, 0.105, 1, 1);
+  addFlat(group, new THREE.RingGeometry(radius * 0.76, radius * 0.87, 48), MAP_MATS.stoneDark, 0, 0, 0.105, 1, 1);
+  addFlat(group, new THREE.CircleGeometry(radius * 0.17, 24), MAP_MATS.crystal, 0, 0, 0.118, 1, 1);
+  for (let i = 0; i < 18; i++) {
+    const a = i / 18 * Math.PI * 2;
+    const slab = new THREE.Mesh(MAP_GEO.stoneSlab, i % 3 ? MAP_MATS.stone : MAP_MATS.stoneLight);
+    slab.position.set(Math.cos(a) * radius * 0.62, 0.125, Math.sin(a) * radius * 0.62);
     slab.scale.set(0.72, 0.55, 0.72);
     slab.rotation.y = a + Math.PI / 8;
     slab.castShadow = slab.receiveShadow = true;
     group.add(slab);
   }
 }
-function addCartoonTree(group, x, z, scale = 1) {
+function addTree(group, x, z, scale = 1, rng = Math.random) {
   const t = new THREE.Mesh(MAP_GEO.trunk, MAP_MATS.trunk);
-  t.position.set(x, 0.25 * scale, z);
+  t.position.set(x, 0.24 * scale, z);
   t.scale.setScalar(scale);
   t.castShadow = true;
   group.add(t);
+  const mat = rng() > 0.45 ? MAP_MATS.pineA : MAP_MATS.pineB;
   for (let k = 0; k < 3; k++) {
-    const c = new THREE.Mesh(MAP_GEO.pineCone, MAP_MATS.pine);
-    c.position.set(x, (0.55 + k * 0.27) * scale, z);
-    c.scale.setScalar(scale * (1 - k * 0.16));
+    const c = new THREE.Mesh(MAP_GEO.pineCone, mat);
+    c.position.set(x + randRange(rng, -0.025, 0.025) * scale, (0.53 + k * 0.27) * scale, z + randRange(rng, -0.025, 0.025) * scale);
+    c.scale.set(scale * (1.05 - k * 0.17), scale * (0.95 - k * 0.11), scale * (1.05 - k * 0.17));
+    c.rotation.y = rng() * Math.PI;
     c.castShadow = true;
     group.add(c);
   }
@@ -425,40 +461,43 @@ function addCartoonTree(group, x, z, scale = 1) {
 function addBush(group, x, z, scale = 1) {
   const b = new THREE.Mesh(MAP_GEO.bush, MAP_MATS.bush);
   b.position.set(x, 0.17 * scale, z);
-  b.scale.set(scale * 1.25, scale * 0.6, scale * 1.05);
+  b.scale.set(scale * 1.25, scale * 0.55, scale * 1.05);
   b.castShadow = b.receiveShadow = true;
   group.add(b);
 }
-function addPebble(group, x, z, scale = 1) {
-  const r = new THREE.Mesh(MAP_GEO.pebble, MAP_MATS.stoneDark);
-  r.position.set(x, 0.16 * scale, z);
-  r.scale.set(scale * 1.35, scale * 0.8, scale);
-  r.rotation.set(Math.random(), Math.random() * Math.PI, Math.random());
+function addPebble(group, x, z, scale = 1, rng = Math.random) {
+  const r = new THREE.Mesh(MAP_GEO.pebble, rng() > 0.45 ? MAP_MATS.stone : MAP_MATS.stoneDark);
+  r.position.set(x, 0.14 * scale, z);
+  r.scale.set(scale * randRange(rng, 0.9, 1.6), scale * randRange(rng, 0.55, 0.9), scale * randRange(rng, 0.8, 1.3));
+  r.rotation.set(rng() * Math.PI, rng() * Math.PI, rng() * Math.PI);
   r.castShadow = r.receiveShadow = true;
   group.add(r);
 }
-function addFlowerPatch(group, x, z, count = 5) {
+function addFlowerPatch(group, x, z, count = 5, rng = Math.random) {
+  const mats = [MAP_MATS.flowerWhite, MAP_MATS.flowerBlue, MAP_MATS.flowerPink];
   for (let i = 0; i < count; i++) {
-    const a = Math.random() * Math.PI * 2, d = Math.random() * 0.32;
-    const f = new THREE.Mesh(MAP_GEO.flower, Math.random() > 0.45 ? MAP_MATS.flowerWhite : MAP_MATS.flowerBlue);
-    f.position.set(x + Math.cos(a) * d, 0.10, z + Math.sin(a) * d);
-    f.scale.setScalar(0.7 + Math.random() * 0.55);
+    const a = rng() * Math.PI * 2, d = rng() * 0.34;
+    const f = new THREE.Mesh(MAP_GEO.flower, mats[Math.floor(rng() * mats.length)]);
+    f.position.set(x + Math.cos(a) * d, 0.11, z + Math.sin(a) * d);
+    f.scale.setScalar(0.65 + rng() * 0.55);
     group.add(f);
   }
 }
 function addCrystalPillar(group, x, z) {
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.38, 0.32, 8), MAP_MATS.stoneDark);
-  base.position.set(x, 0.16, z);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.38, 0.34, 8), MAP_MATS.stoneDark);
+  base.position.set(x, 0.17, z);
   base.castShadow = base.receiveShadow = true;
   group.add(base);
   const crystal = new THREE.Mesh(MAP_GEO.crystal, MAP_MATS.crystal);
-  crystal.position.set(x, 0.55, z);
+  crystal.position.set(x, 0.58, z);
   crystal.scale.set(0.9, 1.35, 0.9);
   crystal.castShadow = true;
   group.add(crystal);
-  const glow = new THREE.PointLight(0x66d9ff, 0.35, 3.3);
-  glow.position.set(x, 0.75, z);
-  group.add(glow);
+  if (MAP_STYLE.useTinyLights) {
+    const glow = new THREE.PointLight(0x65d6ff, 0.20, 2.7);
+    glow.position.set(x, 0.8, z);
+    group.add(glow);
+  }
 }
 function addFence(group, x, z, rot = 0) {
   const fence = new THREE.Group();
@@ -469,18 +508,122 @@ function addFence(group, x, z, rot = 0) {
   const post2 = post1.clone();
   post1.position.x = -0.43; post2.position.x = 0.43; post1.position.y = post2.position.y = 0.28;
   fence.add(rail1, rail2, post1, post2);
-  fence.position.set(x, 0, z);
-  fence.rotation.y = rot;
+  fence.position.set(x, 0, z); fence.rotation.y = rot;
   fence.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   group.add(fence);
+}
+function addFallenLog(group, x, z, rot = 0, scale = 1) {
+  const log = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.9, 7), MAP_MATS.wood);
+  log.position.set(x, 0.15, z);
+  log.rotation.z = Math.PI / 2;
+  log.rotation.y = rot;
+  log.scale.setScalar(scale);
+  log.castShadow = log.receiveShadow = true;
+  group.add(log);
+}
+function addRuinColumn(group, x, z, scale = 1) {
+  const col = new THREE.Group();
+  const h = 0.55 + scale * 0.45;
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.16, 0.42), MAP_MATS.stoneDark);
+  base.position.y = 0.08;
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, h, 7), MAP_MATS.stone);
+  shaft.position.y = 0.16 + h / 2;
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.12, 0.38), MAP_MATS.stoneLight);
+  cap.position.y = 0.22 + h;
+  col.add(base, shaft, cap);
+  col.position.set(x, 0, z);
+  col.rotation.y = Math.random() * Math.PI;
+  col.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  group.add(col);
+}
+function addInkCloudBorder(group, half, rng) {
+  const border = new THREE.Group();
+  const y = -0.11;
+  const count = MAP_STYLE.maxInkClouds;
+  for (let i = 0; i < count; i++) {
+    const side = Math.floor(rng() * 4);
+    const offset = randRange(rng, -half * 1.45, half * 1.45);
+    const out = half + randRange(rng, 1.0, 4.6);
+    let x = offset, z = out * randSign(rng);
+    if (side % 2 === 1) { x = out * randSign(rng); z = offset; }
+    const cloud = new THREE.Mesh(MAP_GEO.cloudCircle, rng() > 0.28 ? MAP_MATS.inkCloud : MAP_MATS.mist);
+    cloud.rotation.x = -Math.PI / 2;
+    cloud.rotation.z = rng() * Math.PI;
+    cloud.position.set(x, y - rng() * 0.05, z);
+    const sc = randRange(rng, 1.5, 3.8);
+    cloud.scale.set(sc * randRange(rng, 1.0, 1.9), sc * randRange(rng, 0.45, 0.95), 1);
+    border.add(cloud);
+  }
+  // dark ink swirls: thin torus arcs lying on the cloud layer, like Chinese-brush strokes.
+  for (let i = 0; i < 18; i++) {
+    const side = Math.floor(rng() * 4);
+    const offset = randRange(rng, -half * 1.30, half * 1.30);
+    const out = half + randRange(rng, 2.0, 5.5);
+    let x = offset, z = out * randSign(rng);
+    if (side % 2 === 1) { x = out * randSign(rng); z = offset; }
+    const swirl = new THREE.Mesh(new THREE.TorusGeometry(randRange(rng, 0.45, 1.25), 0.025, 6, 32, Math.PI * randRange(rng, 0.9, 1.6)), MAP_MATS.inkStroke);
+    swirl.rotation.x = -Math.PI / 2;
+    swirl.rotation.z = rng() * Math.PI * 2;
+    swirl.position.set(x, y + 0.015, z);
+    swirl.scale.y = randRange(rng, 0.45, 0.85);
+    border.add(swirl);
+  }
+  group.add(border);
+}
+function addSquareCliff(group, half, rng) {
+  const cliffHeight = 2.2;
+  const edgeMat = MAP_MATS.cliff;
+  const front = new THREE.Mesh(new THREE.BoxGeometry(half * 2.05, cliffHeight, 0.55), edgeMat);
+  front.position.set(0, -cliffHeight / 2, -half - 0.28);
+  const back = front.clone(); back.position.z = half + 0.28;
+  const left = new THREE.Mesh(new THREE.BoxGeometry(0.55, cliffHeight, half * 2.05), edgeMat);
+  left.position.set(-half - 0.28, -cliffHeight / 2, 0);
+  const right = left.clone(); right.position.x = half + 0.28;
+  [front, back, left, right].forEach(m => { m.castShadow = true; m.receiveShadow = true; group.add(m); });
+  // Rough stone chunks hide the perfectly straight box edge.
+  const chunks = Math.min(44, Math.round(half * 4));
+  for (let i = 0; i < chunks; i++) {
+    const side = i % 4;
+    const u = randRange(rng, -half, half);
+    const out = half + randRange(rng, 0.12, 0.48);
+    let x = u, z = out * randSign(rng);
+    if (side === 1 || side === 3) { x = out * randSign(rng); z = u; }
+    const c = new THREE.Mesh(MAP_GEO.pebble, rng() > 0.4 ? MAP_MATS.cliff : MAP_MATS.cliffDark);
+    c.position.set(x, randRange(rng, -0.45, 0.18), z);
+    c.scale.set(randRange(rng, 1.0, 2.4), randRange(rng, 1.2, 3.2), randRange(rng, 0.8, 2.0));
+    c.rotation.set(rng() * Math.PI, rng() * Math.PI, rng() * Math.PI);
+    c.castShadow = c.receiveShadow = true;
+    group.add(c);
+  }
+}
+function addPathNetwork(group, half, rng) {
+  // Cross-shaped dirt path + noisy patches gives the square arena a handmade feeling.
+  addFlat(group, MAP_GEO.dirtBlob, MAP_MATS.dirt, 0, 0, 0.065, half * 0.23, half * 1.78, 0.02);
+  addFlat(group, MAP_GEO.dirtBlob, MAP_MATS.dirt, 0, 0, 0.066, half * 1.78, half * 0.23, -0.02);
+  addFlat(group, MAP_GEO.dirtBlob, MAP_MATS.dirtLight, 0, -half * 0.18, 0.068, half * 0.28, half * 0.78, 0.05);
+  for (let i = 0; i < 30; i++) {
+    const x = randRange(rng, -half * 0.75, half * 0.75);
+    const z = randRange(rng, -half * 0.75, half * 0.75);
+    if (Math.abs(x) > half * 0.22 && Math.abs(z) > half * 0.22) continue;
+    addFlat(group, MAP_GEO.dirtBlob, rng() > 0.5 ? MAP_MATS.dirt : MAP_MATS.dirtLight, x, z, 0.071 + i * 0.0003, randRange(rng, 0.18, 0.50), randRange(rng, 0.08, 0.28), rng() * Math.PI);
+  }
+}
+function addGrassVariation(group, half, rng) {
+  for (let i = 0; i < 48; i++) {
+    const x = randRange(rng, -half + 0.7, half - 0.7);
+    const z = randRange(rng, -half + 0.7, half - 0.7);
+    if (Math.abs(x) < half * 0.34 && Math.abs(z) < half * 0.34) continue;
+    const mat = rng() > 0.52 ? MAP_MATS.grassPatchA : (rng() > 0.4 ? MAP_MATS.grassPatchB : MAP_MATS.moss);
+    addFlat(group, MAP_GEO.grassBlob, mat, x, z, 0.073 + i * 0.0002, randRange(rng, 0.28, 0.9), randRange(rng, 0.16, 0.55), rng() * Math.PI);
+  }
 }
 
 // ---------- Island ----------
 let islandGroup = new THREE.Group();
 scene.add(islandGroup);
 
-// a point at parameter t (0..1) around the rim of a square of half-size r
-function rimPoint(t, r) {
+function rimPoint(t, half, inset = 0.6) {
+  const r = half - inset;
   const p = (t % 1) * 4, side = Math.floor(p), u = ((p - side) * 2 - 1) * r;
   if (side === 0) return [u, -r];
   if (side === 1) return [r, u];
@@ -493,95 +636,75 @@ function buildIsland(size) {
   islandGroup = new THREE.Group();
   const n = Math.round(size);
   const half = n / 2;
+  const rng = mulberry32(1000 + n * 37); // stable map per island size; no flickering rebuilds
 
-  // Playable surface is still a square grid for the existing game logic,
-  // but each tile is thinner and hidden under a soft grass cap so it no longer looks blocky.
-  const grassMats = [MAP_MATS.grassA, MAP_MATS.grassB];
-  for (let ix = 0; ix < n; ix++) {
-    for (let iz = 0; iz < n; iz++) {
-      const x = ix - (n - 1) / 2;
-      const z = iz - (n - 1) / 2;
-      const block = new THREE.Mesh(MAP_GEO.tile, grassMats[(ix + iz) % 2]);
-      block.position.set(x, -0.36, z);
-      block.receiveShadow = true;
-      islandGroup.add(block);
-    }
+  // Square playable field. One broad mesh hides the old blocky look, while game logic remains tile-based.
+  const base = new THREE.Mesh(new THREE.BoxGeometry(n, 0.64, n), MAP_MATS.grassBase);
+  base.position.y = -0.32;
+  base.receiveShadow = true;
+  islandGroup.add(base);
+
+  // Subtle grid seams only at the border, not as obvious square blocks.
+  for (let i = 0; i <= n; i++) {
+    if (i % 2) continue;
+    const pos = -half + i;
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0x436f3a, transparent: true, opacity: 0.08, depthWrite: false });
+    const lx = new THREE.Mesh(new THREE.PlaneGeometry(0.018, n), lineMat);
+    lx.rotation.x = -Math.PI / 2; lx.position.set(pos, 0.083, 0); islandGroup.add(lx);
+    const lz = new THREE.Mesh(new THREE.PlaneGeometry(n, 0.018), lineMat);
+    lz.rotation.x = -Math.PI / 2; lz.position.set(0, 0.084, pos); islandGroup.add(lz);
   }
 
-  // Soft rounded visual cap: cheap single mesh, makes the island feel less like separate cubes.
-  const cap = new THREE.Mesh(new THREE.CircleGeometry(half * 1.18, 72), MAP_MATS.grassCap);
-  cap.rotation.x = -Math.PI / 2;
-  cap.position.y = 0.028;
-  cap.scale.z = 0.92;
-  cap.receiveShadow = true;
-  islandGroup.add(cap);
+  addSquareCliff(islandGroup, half, rng);
+  addInkCloudBorder(islandGroup, half, rng);
+  addPathNetwork(islandGroup, half, rng);
+  addGrassVariation(islandGroup, half, rng);
+  addStonePlaza(islandGroup, half);
 
-  // Warm dirt paths, similar to the concept image, but only simple flat discs.
-  addFlatDisc(islandGroup, MAP_GEO.dirt, MAP_MATS.dirt, 0, -half * 0.30, 0.045, half * 0.25, half * 0.95, -0.01);
-  addFlatDisc(islandGroup, MAP_GEO.dirt, MAP_MATS.dirt, 0, 0, 0.046, half * 0.95, half * 0.24, 0.03);
-  addFlatDisc(islandGroup, MAP_GEO.dirt, MAP_MATS.dirt, 0, 0, 0.047, half * 0.62, half * 0.62, 0);
-
-  // Central stone arena.
-  addCentralStonePlaza(islandGroup, Math.max(1.45, half * 0.30));
-
-  // Rocky cliff base underneath — still lightweight, but more rounded and less cubic.
-  const H = half * 1.55 + 4;
-  const rock = new THREE.Mesh(new THREE.ConeGeometry(half * 1.12, H, 11), MAP_MATS.cliff);
-  rock.rotation.x = Math.PI;
-  rock.rotation.y = 0.35;
-  rock.position.y = -0.9 - H / 2 + 0.7;
-  rock.castShadow = true;
-  islandGroup.add(rock);
-  const lumpCount = 7;
-  for (let i = 0; i < lumpCount; i++) {
-    const a = i / lumpCount * Math.PI * 2 + Math.random() * 0.2;
-    const hh = half * (0.55 + Math.random() * 0.55);
-    const lump = new THREE.Mesh(new THREE.ConeGeometry(half * (0.22 + Math.random() * 0.18), hh, 7), MAP_MATS.cliff);
-    lump.rotation.x = Math.PI;
-    lump.rotation.y = Math.random() * Math.PI;
-    lump.position.set(Math.cos(a) * half * 0.72, -1.2 - hh / 2, Math.sin(a) * half * 0.72);
-    lump.castShadow = true;
-    islandGroup.add(lump);
-  }
-
-  // Trees, rocks, bushes, flowers. Counts are capped to keep the game fast.
-  const treeCount = Math.min(20, Math.max(8, Math.round(n * 0.85)));
-  for (let i = 0; i < treeCount; i++) {
-    const [tx, tz] = rimPoint((i + 0.25 + Math.random() * 0.5) / treeCount, half * (0.82 + Math.random() * 0.22));
-    addCartoonTree(islandGroup, tx, tz, 0.85 + Math.random() * 0.45);
-  }
-
-  const decorCount = Math.min(34, Math.max(16, Math.round(n * 1.6)));
-  for (let i = 0; i < decorCount; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const r = half * (0.45 + Math.random() * 0.56);
-    const x = Math.cos(a) * r;
-    const z = Math.sin(a) * r * 0.92;
-    if (Math.abs(x) < half * 0.28 && Math.abs(z) < half * 0.28) continue;
-    const roll = Math.random();
-    if (roll < 0.34) addBush(islandGroup, x, z, 0.75 + Math.random() * 0.7);
-    else if (roll < 0.64) addPebble(islandGroup, x, z, 0.65 + Math.random() * 1.0);
-    else addFlowerPatch(islandGroup, x, z, 3 + Math.floor(Math.random() * 5));
-  }
-
-  // Six small glowing markers around the arena, matching the concept but with weak light only.
-  const shrineCount = 6;
+  // Ruins and crystals: stronger scene identity, low geometry cost.
+  const shrineCount = 8;
   for (let i = 0; i < shrineCount; i++) {
     const a = i / shrineCount * Math.PI * 2 + Math.PI / shrineCount;
-    addCrystalPillar(islandGroup, Math.cos(a) * half * 0.58, Math.sin(a) * half * 0.52);
+    addCrystalPillar(islandGroup, Math.cos(a) * half * 0.58, Math.sin(a) * half * 0.58);
+  }
+  for (let i = 0; i < 10; i++) {
+    const [x, z] = rimPoint((i + 0.15) / 10, half, randRange(rng, 0.7, 1.8));
+    addRuinColumn(islandGroup, x, z, randRange(rng, 0.55, 1.25));
   }
 
-  // A few fence pieces near the front edge give scale and break the straight border.
-  addFence(islandGroup, -half * 0.35, -half * 0.74, 0.08);
-  addFence(islandGroup, half * 0.36, -half * 0.70, -0.12);
-  addFence(islandGroup, -half * 0.76, half * 0.10, Math.PI / 2 + 0.08);
+  // Edge trees form a natural square frame but leave the centre clear for gameplay.
+  const treeCount = Math.min(MAP_STYLE.maxTrees, Math.max(14, Math.round(n * 1.25)));
+  for (let i = 0; i < treeCount; i++) {
+    const [tx, tz] = rimPoint((i + rng() * 0.65) / treeCount, half, randRange(rng, 0.65, 1.75));
+    if (Math.abs(tx) < half * 0.33 && Math.abs(tz) < half * 0.33) continue;
+    addTree(islandGroup, tx, tz, randRange(rng, 0.78, 1.28), rng);
+  }
 
-  // Small entrance bridge board hints at the concept image without changing gameplay.
+  const decorCount = Math.min(MAP_STYLE.maxDecor, Math.max(42, Math.round(n * 3.4)));
+  for (let i = 0; i < decorCount; i++) {
+    const x = randRange(rng, -half + 0.45, half - 0.45);
+    const z = randRange(rng, -half + 0.45, half - 0.45);
+    if (!insideSquare(x, z, half, 0.3)) continue;
+    if (Math.abs(x) < half * 0.25 && Math.abs(z) < half * 0.25) continue;
+    const edgeBias = Math.max(Math.abs(x), Math.abs(z)) / half;
+    if (edgeBias < 0.54 && rng() < 0.38) continue;
+    const roll = rng();
+    if (roll < 0.32) addBush(islandGroup, x, z, randRange(rng, 0.62, 1.18));
+    else if (roll < 0.58) addPebble(islandGroup, x, z, randRange(rng, 0.56, 1.2), rng);
+    else if (roll < 0.86) addFlowerPatch(islandGroup, x, z, 3 + Math.floor(rng() * 5), rng);
+    else addFallenLog(islandGroup, x, z, rng() * Math.PI, randRange(rng, 0.75, 1.25));
+  }
+
+  // Wood fences and front bridge make the square arena feel built, not just generated.
+  addFence(islandGroup, -half * 0.48, -half * 0.72, 0.04);
+  addFence(islandGroup, half * 0.48, -half * 0.72, -0.04);
+  addFence(islandGroup, -half * 0.72, half * 0.25, Math.PI / 2 + 0.05);
+  addFence(islandGroup, half * 0.72, half * 0.25, Math.PI / 2 - 0.05);
   const bridge = new THREE.Group();
-  for (let i = 0; i < 5; i++) {
-    const plank = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.10, 0.32), MAP_MATS.wood);
-    plank.position.set((i - 2) * 0.02, 0.09, -half * 0.94 - i * 0.30);
-    plank.rotation.y = (i % 2 ? 0.03 : -0.04);
+  for (let i = 0; i < 7; i++) {
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.10, 0.34), MAP_MATS.wood);
+    plank.position.set((i - 3) * 0.015, 0.10, -half - 0.18 - i * 0.30);
+    plank.rotation.y = (i % 2 ? 0.035 : -0.045);
     plank.castShadow = plank.receiveShadow = true;
     bridge.add(plank);
   }
