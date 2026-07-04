@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 // ---------- Socket & UI plumbing ----------
 const socket = io();
@@ -219,6 +224,9 @@ function showScreen(name) {
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;      // softer, nicer shadows
+renderer.toneMapping = THREE.ACESFilmicToneMapping;    // cinematic-but-clean tone
+renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xdce8f2, 48, 140); // soft cloud haze; background set in the scenery setup below
@@ -235,14 +243,35 @@ sun.shadow.camera.left = -25; sun.shadow.camera.right = 25;
 sun.shadow.camera.top = 25; sun.shadow.camera.bottom = -25;
 scene.add(sun);
 
+// soft image-based lighting from an HDRI sky (the cartoon gradient stays as the visible background)
+new RGBELoader().load('hdri/table_mountain_1_puresky_2k.hdr', hdr => {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromEquirectangular(hdr).texture;
+  if ('environmentIntensity' in scene) scene.environmentIntensity = 0.8;
+  hdr.dispose(); pmrem.dispose();
+}, undefined, err => console.warn('[hdri] load failed', err));
+
+let composer = null; // declared early so resize() can reference it safely
+
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  if (composer) composer.setSize(w, h);
 }
 window.addEventListener('resize', resize);
 resize();
+
+// gentle bloom for a bright, glowy cartoon feel (falls back to plain render if it fails)
+try {
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.35, 0.6, 0.85));
+  composer.addPass(new OutputPass());
+  composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  composer.setSize(window.innerWidth, window.innerHeight);
+} catch (e) { console.warn('[postfx] disabled', e); composer = null; }
 
 // ---------- Sky & sea of clouds (pure scenery — a floating island vibe) ----------
 function makeSkyTexture() {
@@ -1708,7 +1737,8 @@ function animate() {
     if (!charMixers[i].mesh.parent) charMixers.splice(i, 1);
     else charMixers[i].mixer.update(dt);
   }
-  renderer.render(scene, camera);
+  if (composer) composer.render();
+  else renderer.render(scene, camera);
 }
 animate();
 
