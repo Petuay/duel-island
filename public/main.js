@@ -283,32 +283,43 @@ function loadTex(name) {
 }
 const PAINTED = {
   floor: { tex: loadTex('floor.webp') },
-  cloudRidge: { tex: loadTex('cloud_ridge.webp'), aspect: 640 / 460 },
-  cloudBig: { tex: loadTex('cloud_big.webp'), aspect: 640 / 552 },
-  cloudSmall: { tex: loadTex('cloud_small.webp'), aspect: 405 / 180 }
+  cloudFrags: [
+    { tex: loadTex('cloudfrag0.webp'), aspect: 560 / 542 },
+    { tex: loadTex('cloudfrag1.webp'), aspect: 511 / 557 },
+    { tex: loadTex('cloudfrag2.webp'), aspect: 453 / 371 }, // mossy (cloud2) fragment
+    { tex: loadTex('cloudfrag3.webp'), aspect: 393 / 172 },
+    { tex: loadTex('cloudfrag4.webp'), aspect: 181 / 135 },
+    { tex: loadTex('cloudfrag5.webp'), aspect: 166 / 135 }
+  ]
 };
 
 // Flat pale background, matching the reference art (far outside the ink clouds is plain).
 scene.background = new THREE.Color(0xf1e6da);
 
-// Painted ink-cloud swirls hugging the outside of the arena walls.
+// Painted ink-cloud fragments lacing along the outside of each arena edge.
+// Kept strictly outside `half` and low in y, with the floor drawn after (renderOrder),
+// so the play area is never visually covered no matter the camera angle.
 function addPaintedCloudBorder(group, half) {
-  const defs = [PAINTED.cloudRidge, PAINTED.cloudBig, PAINTED.cloudSmall];
+  const defs = PAINTED.cloudFrags;
   const rng = mulberry32(4242);
-  const ringCount = 10;
-  for (let i = 0; i < ringCount; i++) {
-    const side = i % 4;
-    const t = randRange(rng, -0.9, 0.9);
-    const out = half + randRange(rng, 0.6, 2.2);
-    let x = t * half, z = out * (side < 2 ? -1 : 1);
-    if (side % 2 === 1) { x = out * (side === 1 ? 1 : -1); z = t * half; }
-    const def = defs[Math.floor(rng() * defs.length)];
-    const h = randRange(rng, 3.2, 5.6);
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: def.tex, transparent: true, opacity: 0.95, depthWrite: false }));
-    sp.center.set(0.5, 0.35);
-    sp.scale.set(h * def.aspect, h, 1);
-    sp.position.set(x, -0.1, z);
-    group.add(sp);
+  const perSide = Math.max(4, Math.round(half * 0.9));
+  for (let side = 0; side < 4; side++) {
+    for (let i = 0; i < perSide; i++) {
+      const t = ((i + randRange(rng, -0.35, 0.35)) / (perSide - 1)) * 2 - 1; // -1..1 along the edge
+      const out = half + randRange(rng, 0.9, 2.6);
+      let x = t * half, z = out * (side < 2 ? -1 : 1);
+      if (side % 2 === 1) { x = out * (side === 1 ? 1 : -1); z = t * half; }
+      const def = defs[Math.floor(rng() * defs.length)];
+      const h = randRange(rng, 1.6, 3.1);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: def.tex, transparent: true, opacity: randRange(rng, 0.85, 1), depthWrite: false
+      }));
+      sp.renderOrder = -1;
+      sp.center.set(0.5, 0.4);
+      sp.scale.set(h * def.aspect, h, 1);
+      sp.position.set(x, -0.35 - rng() * 0.3, z);
+      group.add(sp);
+    }
   }
 }
 
@@ -681,6 +692,7 @@ function buildIsland(size) {
   );
   base.position.y = -0.32;
   base.receiveShadow = true;
+  base.renderOrder = 1;
   islandGroup.add(base);
 
   addPaintedCloudBorder(islandGroup, half);
