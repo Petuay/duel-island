@@ -296,9 +296,10 @@ const PAINTED = {
 // Flat pale background, matching the reference art (far outside the ink clouds is plain).
 scene.background = new THREE.Color(0xf1e6da);
 
-// Painted ink-cloud fragments lacing along the outside of each arena edge.
-// Kept strictly outside `half` and low in y, with the floor drawn after (renderOrder),
-// so the play area is never visually covered no matter the camera angle.
+// Painted ink-cloud fragments lying flat on the ground around the arena, like painted
+// map art (not camera-facing sprites) — matches the reference's top-down ink border.
+// Kept strictly outside `half`, with the floor's renderOrder guaranteeing it draws on
+// top, so the play area is never visually covered no matter the camera angle.
 function addPaintedCloudBorder(group, half) {
   const defs = PAINTED.cloudFrags;
   const rng = mulberry32(4242);
@@ -310,15 +311,20 @@ function addPaintedCloudBorder(group, half) {
       let x = t * half, z = out * (side < 2 ? -1 : 1);
       if (side % 2 === 1) { x = out * (side === 1 ? 1 : -1); z = t * half; }
       const def = defs[Math.floor(rng() * defs.length)];
-      const h = randRange(rng, 1.6, 3.1);
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: def.tex, transparent: true, opacity: randRange(rng, 0.85, 1), depthWrite: false
-      }));
-      sp.renderOrder = -1;
-      sp.center.set(0.5, 0.4);
-      sp.scale.set(h * def.aspect, h, 1);
-      sp.position.set(x, -0.35 - rng() * 0.3, z);
-      group.add(sp);
+      const s = randRange(rng, 2.0, 3.8);
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({
+          map: def.tex, transparent: true, opacity: randRange(rng, 0.85, 1),
+          depthWrite: false, side: THREE.DoubleSide
+        })
+      );
+      plane.renderOrder = -1;
+      plane.rotation.x = -Math.PI / 2;
+      plane.rotation.z = rng() * Math.PI * 2;
+      plane.scale.set(s * def.aspect, s, 1);
+      plane.position.set(x, -0.34 - rng() * 0.05, z);
+      group.add(plane);
     }
   }
 }
