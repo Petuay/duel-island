@@ -30,6 +30,34 @@ let selfChar = 'buddha';
     err => console.warn('[char] load failed:', c.id, err)));
 })();
 
+// ---------- 3D arena border model ----------
+let borderTemplate = null;
+const BORDER_TILE_SIZE = 1.88; // model footprint (X/Z) in world units, from the source .glb
+(() => {
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  loader.load('models/border.glb',
+    gltf => { borderTemplate = gltf.scene; addBorderTiles(islandGroup, currentIslandSize / 2); },
+    undefined,
+    err => console.warn('[border] load failed:', err));
+})();
+function addBorderTiles(group, half) {
+  if (!borderTemplate) return;
+  const perSide = Math.max(1, Math.round((half * 2) / BORDER_TILE_SIZE));
+  const step = (half * 2) / perSide;
+  for (let side = 0; side < 4; side++) {
+    for (let i = 0; i < perSide; i++) {
+      const u = -half + step * (i + 0.5);
+      const tile = skeletonClone(borderTemplate);
+      tile.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      if (side === 0) { tile.position.set(u, 0, -half); tile.rotation.y = 0; }
+      else if (side === 1) { tile.position.set(half, 0, u); tile.rotation.y = Math.PI / 2; }
+      else if (side === 2) { tile.position.set(u, 0, half); tile.rotation.y = Math.PI; }
+      else { tile.position.set(-half, 0, u); tile.rotation.y = -Math.PI / 2; }
+      group.add(tile);
+    }
+  }
+}
+
 function clipByName(tpl, name) {
   return tpl && tpl.animations ? (tpl.animations.find(a => a.name === name) || null) : null;
 }
@@ -659,6 +687,8 @@ function buildIsland(size) {
   base.receiveShadow = true;
   base.renderOrder = 1;
   islandGroup.add(base);
+
+  addBorderTiles(islandGroup, half);
 
   scene.add(islandGroup);
   return n;
