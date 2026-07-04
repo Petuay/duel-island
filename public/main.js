@@ -282,8 +282,11 @@ function loadTex(name) {
   return t;
 }
 const PAINTED = {
-  floor: { tex: loadTex('floor.webp') }
+  floor: { tex: loadTex('floor.webp') },
+  outerGround: { tex: loadTex('outer_ground.webp') }
 };
+PAINTED.outerGround.tex.wrapS = PAINTED.outerGround.tex.wrapT = THREE.RepeatWrapping;
+PAINTED.outerGround.tex.repeat.set(30, 30);
 
 // ---------- Sky & sea of clouds (pure scenery — a floating island vibe) ----------
 function makeSkyTexture() {
@@ -307,6 +310,16 @@ function makeCloudTexture() {
   return new THREE.CanvasTexture(c);
 }
 scene.background = makeSkyTexture();
+
+// painted rock/moss ground filling the area outside the arena
+const outerGround = new THREE.Mesh(
+  new THREE.PlaneGeometry(300, 300),
+  new THREE.MeshStandardMaterial({ map: PAINTED.outerGround.tex, roughness: 1 })
+);
+outerGround.rotation.x = -Math.PI / 2;
+outerGround.position.y = -0.4;
+outerGround.receiveShadow = true;
+scene.add(outerGround);
 
 // small stylized decorations that cling to the island rim (pure scenery)
 function makePineTree(x, z) {
