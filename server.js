@@ -90,7 +90,8 @@ function hitFromBehind(bulletAng, faceAng) {
   return Math.sin(bulletAng) * Math.sin(faceAng) + Math.cos(bulletAng) * Math.cos(faceAng) > 0.15;
 }
 
-const CHAR_IDS = ['buddha', 'jesus', 'kongming']; // selectable character models
+const CHAR_IDS = ['buddha', 'jesus', 'kongming', 'buu', 'guanyin', 'khanthi', 'hanuman']; // selectable character models
+const BOT_CHAR_ID = 'bot'; // reserved model, only ever used for bot players (not player-selectable)
 
 // sequential fire animation timing (mirrored client-side in main.js)
 const SHOT_START_DELAY = 4200; // pause (also the firing-order shuffle window) before the first shot
@@ -185,7 +186,7 @@ class Room {
     this.players.set(id, {
       id, name, color, x: 0, z: 0, angle: 0,
       alive: true, ready: false, isBot: true,
-      char: CHAR_IDS[Math.floor(Math.random() * CHAR_IDS.length)]
+      char: BOT_CHAR_ID
     });
   }
 

@@ -17,17 +17,24 @@ const MODEL_FACE_Y = 0;      // extra yaw so a model faces its aim (+Z); flip to
 const CHARACTERS = [
   { id: 'buddha', name: 'บุดด้า' },
   { id: 'jesus', name: 'จีซัส' },
-  { id: 'kongming', name: 'ขงเบ้ง' }
+  { id: 'kongming', name: 'ขงเบ้ง' },
+  { id: 'buu', name: 'บูบู้' },
+  { id: 'guanyin', name: 'กวนอิม' },
+  { id: 'khanthi', name: 'คานที' },
+  { id: 'hanuman', name: 'หนุมาน' }
 ];
+const BOT_CHAR_ID = 'bot'; // reserved model for bot players only — not in CHARACTERS, so it never shows in the picker
 const charTemplates = {};    // id -> { scene, animations }
 const charMixers = [];       // { mixer, mesh } — updated each frame, pruned when the mesh leaves the scene
 let selfChar = 'buddha';
 (() => {
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-  CHARACTERS.forEach(c => loader.load(`models/${c.id}.glb`,
-    gltf => { charTemplates[c.id] = { scene: gltf.scene, animations: gltf.animations }; },
+  const loadChar = id => loader.load(`models/${id}.glb`,
+    gltf => { charTemplates[id] = { scene: gltf.scene, animations: gltf.animations }; },
     undefined,
-    err => console.warn('[char] load failed:', c.id, err)));
+    err => console.warn('[char] load failed:', id, err));
+  CHARACTERS.forEach(c => loadChar(c.id));
+  loadChar(BOT_CHAR_ID);
 })();
 
 // ---------- 3D arena border model ----------
