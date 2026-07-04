@@ -222,20 +222,20 @@ function showScreen(name) {
 
 // ---------- Three.js scene ----------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // keep crisp on high-DPI without hurting FPS
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;      // softer, nicer shadows
 renderer.toneMapping = THREE.ACESFilmicToneMapping;    // cinematic-but-clean tone
-renderer.toneMappingExposure = 0.72; // softer exposure: less blown-out cartoon lighting
+renderer.toneMappingExposure = 0.68; // cleaner, less washed-out lighting
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xdce8f2, 48, 140); // soft cloud haze; background set in the scenery setup below
 
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 260);
 
-const hemi = new THREE.HemisphereLight(0xeaf4ff, 0x8d8572, 0.86);
+const hemi = new THREE.HemisphereLight(0xf1f5f0, 0x786f61, 0.78);
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xfff1d6, 0.48);
+const sun = new THREE.DirectionalLight(0xffedd2, 0.42);
 sun.position.set(10, 20, 8);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
@@ -268,7 +268,7 @@ resize();
 try {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.055, 0.28, 0.96));
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.025, 0.20, 0.98));
   composer.addPass(new OutputPass());
   composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   composer.setSize(window.innerWidth, window.innerHeight);
@@ -357,9 +357,9 @@ function makePagoda(x, z) {
 // Goal: a square playable arena, slightly more natural/realistic surface,
 // and a Chinese-ink cloud border around the outside without heavy assets.
 const MAP_STYLE = {
-  maxDecor: 38,
-  maxTrees: 10,
-  maxInkClouds: 112,
+  maxDecor: 15,          // about 60% less interior clutter
+  maxTrees: 4,           // corner trees only; centre stays clear
+  maxInkClouds: 132,     // more visible ink-cloud border outside the wall
   useTinyLights: false // keep false for faster laptops; crystals still glow via emissive material
 };
 
@@ -377,12 +377,12 @@ function randSign(rng) { return rng() > 0.5 ? 1 : -1; }
 function insideSquare(x, z, half, margin = 0) { return Math.abs(x) <= half - margin && Math.abs(z) <= half - margin; }
 
 const MAP_MATS = {
-  grassBase: new THREE.MeshStandardMaterial({ color: 0x6fae55, roughness: 1, metalness: 0 }),
+  grassBase: new THREE.MeshStandardMaterial({ color: 0x6f9c4f, roughness: 1, metalness: 0 }),
   grassPatchA: new THREE.MeshStandardMaterial({ color: 0x83bd61, roughness: 1, side: THREE.DoubleSide }),
   grassPatchB: new THREE.MeshStandardMaterial({ color: 0x537f49, roughness: 1, side: THREE.DoubleSide }),
   moss: new THREE.MeshStandardMaterial({ color: 0x5f8f48, roughness: 1, side: THREE.DoubleSide }),
-  dirt: new THREE.MeshStandardMaterial({ color: 0xb9894d, roughness: 1, side: THREE.DoubleSide }),
-  dirtLight: new THREE.MeshStandardMaterial({ color: 0xd0a160, roughness: 1, side: THREE.DoubleSide }),
+  dirt: new THREE.MeshStandardMaterial({ color: 0xb18452, roughness: 1, side: THREE.DoubleSide }),
+  dirtLight: new THREE.MeshStandardMaterial({ color: 0xc99b61, roughness: 1, side: THREE.DoubleSide }),
   stone: new THREE.MeshStandardMaterial({ color: 0x9a988b, roughness: 1, flatShading: true }),
   stoneLight: new THREE.MeshStandardMaterial({ color: 0xb6b29f, roughness: 1, flatShading: true }),
   stoneDark: new THREE.MeshStandardMaterial({ color: 0x676a61, roughness: 1, flatShading: true }),
@@ -397,9 +397,9 @@ const MAP_MATS = {
   flowerPink: new THREE.MeshStandardMaterial({ color: 0xd99aaa, roughness: 1, flatShading: true }),
   wood: new THREE.MeshStandardMaterial({ color: 0x7c5330, roughness: 1, flatShading: true }),
   crystal: new THREE.MeshStandardMaterial({ color: 0x65d6ff, emissive: 0x1380a6, emissiveIntensity: 0.55, roughness: 0.45, flatShading: true }),
-  inkCloud: new THREE.MeshBasicMaterial({ color: 0xf4f0e7, transparent: true, opacity: 0.78, depthWrite: false, side: THREE.DoubleSide }),
-  inkStroke: new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.38, depthWrite: false, side: THREE.DoubleSide }),
-  mist: new THREE.MeshBasicMaterial({ color: 0xfffbf1, transparent: true, opacity: 0.52, depthWrite: false, side: THREE.DoubleSide })
+  inkCloud: new THREE.MeshBasicMaterial({ color: 0xf3eadc, transparent: true, opacity: 0.86, depthWrite: false, side: THREE.DoubleSide }),
+  inkStroke: new THREE.MeshBasicMaterial({ color: 0x050505, transparent: true, opacity: 0.54, depthWrite: false, side: THREE.DoubleSide }),
+  mist: new THREE.MeshBasicMaterial({ color: 0xfffbef, transparent: true, opacity: 0.64, depthWrite: false, side: THREE.DoubleSide })
 };
 const MAP_GEO = {
   base: new THREE.BoxGeometry(1, 1, 1),
@@ -560,7 +560,7 @@ function addInkCloudBorder(group, half, rng) {
   }
 
   // Thick black ink-wash brush strokes behind the clouds.
-  for (let i = 0; i < 34; i++) {
+  for (let i = 0; i < 52; i++) {
     const side = Math.floor(rng() * 4);
     const offset = randRange(rng, -half * 1.22, half * 1.22);
     const out = half + randRange(rng, 1.15, 5.9);
@@ -572,7 +572,7 @@ function addInkCloudBorder(group, half, rng) {
     brush.rotation.z = rng() * Math.PI;
     brush.position.set(x, y + 0.006, z);
     const bs = randRange(rng, 1.3, 3.6);
-    brush.scale.set(bs * randRange(rng, 1.7, 3.0), bs * randRange(rng, 0.20, 0.42), 1);
+    brush.scale.set(bs * randRange(rng, 1.9, 3.4), bs * randRange(rng, 0.22, 0.48), 1);
     border.add(brush);
 
     const swirl = new THREE.Mesh(
@@ -588,7 +588,7 @@ function addInkCloudBorder(group, half, rng) {
 
   // A few distant ink mountains / pagodas as flat silhouettes for atmosphere.
   const mountainMat = new THREE.MeshBasicMaterial({ color: 0x232323, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 12; i++) {
     const side = Math.floor(rng() * 4);
     const offset = randRange(rng, -half * 1.05, half * 1.05);
     const out = half + randRange(rng, 4.5, 8.0);
@@ -654,7 +654,7 @@ function addPathNetwork(group, half, rng) {
   }
 }
 function addGrassVariation(group, half, rng) {
-  for (let i = 0; i < 32; i++) {
+  for (let i = 0; i < 22; i++) {
     const x = randRange(rng, -half + 0.75, half - 0.75);
     const z = randRange(rng, -half + 0.75, half - 0.75);
     // Most grass variation hugs the edges; centre remains readable for combat.
@@ -710,37 +710,43 @@ function buildIsland(size) {
   addStonePlaza(islandGroup, half);
 
   // Ruins and crystals: stronger scene identity, low geometry cost.
-  const shrineCount = 6;
+  const shrineCount = 4;
   for (let i = 0; i < shrineCount; i++) {
     const a = i / shrineCount * Math.PI * 2 + Math.PI / shrineCount;
-    addCrystalPillar(islandGroup, Math.cos(a) * half * 0.58, Math.sin(a) * half * 0.58);
+    addCrystalPillar(islandGroup, Math.cos(a) * half * 0.68, Math.sin(a) * half * 0.68);
   }
-  for (let i = 0; i < 8; i++) {
-    const [x, z] = rimPoint((i + 0.15) / 8, half, randRange(rng, 0.7, 1.5));
-    addRuinColumn(islandGroup, x, z, randRange(rng, 0.55, 1.25));
+  for (let i = 0; i < 3; i++) {
+    const [x, z] = rimPoint((i + 0.28) / 3, half, randRange(rng, 0.75, 1.25));
+    addRuinColumn(islandGroup, x, z, randRange(rng, 0.55, 1.05));
   }
 
   // Edge trees form a natural square frame but leave the centre clear for gameplay.
-  const treeCount = Math.min(MAP_STYLE.maxTrees, Math.max(8, Math.round(n * 0.52)));
+  const treeCount = MAP_STYLE.maxTrees;
+  const cornerInset = 1.15;
+  const cornerTrees = [
+    [-half + cornerInset, -half + cornerInset],
+    [ half - cornerInset, -half + cornerInset],
+    [-half + cornerInset,  half - cornerInset],
+    [ half - cornerInset,  half - cornerInset]
+  ];
   for (let i = 0; i < treeCount; i++) {
-    const [tx, tz] = rimPoint((i + rng() * 0.65) / treeCount, half, randRange(rng, 0.65, 1.75));
-    if (Math.abs(tx) < half * 0.33 && Math.abs(tz) < half * 0.33) continue;
-    addTree(islandGroup, tx, tz, randRange(rng, 0.78, 1.28), rng);
+    const [tx, tz] = cornerTrees[i];
+    addTree(islandGroup, tx, tz, randRange(rng, 0.82, 1.12), rng);
   }
 
-  const decorCount = Math.min(MAP_STYLE.maxDecor, Math.max(24, Math.round(n * 1.65)));
+  const decorCount = Math.min(MAP_STYLE.maxDecor, Math.max(10, Math.round(n * 0.65)));
   for (let i = 0; i < decorCount; i++) {
     const x = randRange(rng, -half + 0.45, half - 0.45);
     const z = randRange(rng, -half + 0.45, half - 0.45);
     if (!insideSquare(x, z, half, 0.3)) continue;
     if (Math.abs(x) < half * 0.34 && Math.abs(z) < half * 0.34) continue;
     const edgeBias = Math.max(Math.abs(x), Math.abs(z)) / half;
-    if (edgeBias < 0.66 && rng() < 0.72) continue;
+    if (edgeBias < 0.78 && rng() < 0.90) continue;
     const roll = rng();
-    if (roll < 0.30) addBush(islandGroup, x, z, randRange(rng, 0.56, 1.02));
-    else if (roll < 0.44) addPebble(islandGroup, x, z, randRange(rng, 0.56, 1.2), rng);
-    else if (roll < 0.86) addFlowerPatch(islandGroup, x, z, 3 + Math.floor(rng() * 5), rng);
-    else addFallenLog(islandGroup, x, z, rng() * Math.PI, randRange(rng, 0.75, 1.25));
+    if (roll < 0.24) addBush(islandGroup, x, z, randRange(rng, 0.45, 0.82));
+    else if (roll < 0.44) addPebble(islandGroup, x, z, randRange(rng, 0.42, 0.88), rng);
+    else if (roll < 0.90) addFlowerPatch(islandGroup, x, z, 2 + Math.floor(rng() * 4), rng);
+    else addFallenLog(islandGroup, x, z, rng() * Math.PI, randRange(rng, 0.65, 1.0));
   }
 
   // Wood fences and front bridge make the square arena feel built, not just generated.
@@ -1077,7 +1083,7 @@ function getBloodTexture() {
   const ctx = cvs.getContext('2d');
   ctx.clearRect(0, 0, 128, 128);
   ctx.fillStyle = 'rgba(150,10,10,0.88)';
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 12; i++) {
     const cx = 64 + (Math.random() - 0.5) * 70;
     const cy = 64 + (Math.random() - 0.5) * 70;
     const r = 8 + Math.random() * 20;
