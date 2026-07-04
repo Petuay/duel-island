@@ -357,9 +357,9 @@ function makePagoda(x, z) {
 // Goal: a square playable arena, slightly more natural/realistic surface,
 // and a Chinese-ink cloud border around the outside without heavy assets.
 const MAP_STYLE = {
-  maxDecor: 92,
-  maxTrees: 28,
-  maxInkClouds: 70,
+  maxDecor: 38,
+  maxTrees: 10,
+  maxInkClouds: 112,
   useTinyLights: false // keep false for faster laptops; crystals still glow via emissive material
 };
 
@@ -397,9 +397,9 @@ const MAP_MATS = {
   flowerPink: new THREE.MeshStandardMaterial({ color: 0xd99aaa, roughness: 1, flatShading: true }),
   wood: new THREE.MeshStandardMaterial({ color: 0x7c5330, roughness: 1, flatShading: true }),
   crystal: new THREE.MeshStandardMaterial({ color: 0x65d6ff, emissive: 0x1380a6, emissiveIntensity: 0.55, roughness: 0.45, flatShading: true }),
-  inkCloud: new THREE.MeshBasicMaterial({ color: 0xf0eee6, transparent: true, opacity: 0.58, depthWrite: false, side: THREE.DoubleSide }),
-  inkStroke: new THREE.MeshBasicMaterial({ color: 0x252525, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide }),
-  mist: new THREE.MeshBasicMaterial({ color: 0xf7f4ec, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide })
+  inkCloud: new THREE.MeshBasicMaterial({ color: 0xf4f0e7, transparent: true, opacity: 0.78, depthWrite: false, side: THREE.DoubleSide }),
+  inkStroke: new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.38, depthWrite: false, side: THREE.DoubleSide }),
+  mist: new THREE.MeshBasicMaterial({ color: 0xfffbf1, transparent: true, opacity: 0.52, depthWrite: false, side: THREE.DoubleSide })
 };
 const MAP_GEO = {
   base: new THREE.BoxGeometry(1, 1, 1),
@@ -538,35 +538,68 @@ function addRuinColumn(group, x, z, scale = 1) {
 }
 function addInkCloudBorder(group, half, rng) {
   const border = new THREE.Group();
-  const y = -0.11;
+  const y = -0.16;
+
+  // Big soft white cloud masses outside the square arena.
+  // Kept as flat planes so the effect is clear but very cheap for WebGL.
   const count = MAP_STYLE.maxInkClouds;
   for (let i = 0; i < count; i++) {
     const side = Math.floor(rng() * 4);
-    const offset = randRange(rng, -half * 1.45, half * 1.45);
-    const out = half + randRange(rng, 1.0, 4.6);
+    const offset = randRange(rng, -half * 1.18, half * 1.18);
+    const out = half + randRange(rng, 0.85, 5.15);
     let x = offset, z = out * randSign(rng);
     if (side % 2 === 1) { x = out * randSign(rng); z = offset; }
-    const cloud = new THREE.Mesh(MAP_GEO.cloudCircle, rng() > 0.28 ? MAP_MATS.inkCloud : MAP_MATS.mist);
+    const mat = rng() > 0.22 ? MAP_MATS.inkCloud : MAP_MATS.mist;
+    const cloud = new THREE.Mesh(MAP_GEO.cloudCircle, mat);
     cloud.rotation.x = -Math.PI / 2;
     cloud.rotation.z = rng() * Math.PI;
-    cloud.position.set(x, y - rng() * 0.05, z);
-    const sc = randRange(rng, 1.5, 3.8);
-    cloud.scale.set(sc * randRange(rng, 1.0, 1.9), sc * randRange(rng, 0.45, 0.95), 1);
+    cloud.position.set(x, y - rng() * 0.07, z);
+    const sc = randRange(rng, 2.2, 5.2);
+    cloud.scale.set(sc * randRange(rng, 1.25, 2.25), sc * randRange(rng, 0.48, 0.92), 1);
     border.add(cloud);
   }
-  // dark ink swirls: thin torus arcs lying on the cloud layer, like Chinese-brush strokes.
-  for (let i = 0; i < 18; i++) {
+
+  // Thick black ink-wash brush strokes behind the clouds.
+  for (let i = 0; i < 34; i++) {
     const side = Math.floor(rng() * 4);
-    const offset = randRange(rng, -half * 1.30, half * 1.30);
-    const out = half + randRange(rng, 2.0, 5.5);
+    const offset = randRange(rng, -half * 1.22, half * 1.22);
+    const out = half + randRange(rng, 1.15, 5.9);
     let x = offset, z = out * randSign(rng);
     if (side % 2 === 1) { x = out * randSign(rng); z = offset; }
-    const swirl = new THREE.Mesh(new THREE.TorusGeometry(randRange(rng, 0.45, 1.25), 0.025, 6, 32, Math.PI * randRange(rng, 0.9, 1.6)), MAP_MATS.inkStroke);
+
+    const brush = new THREE.Mesh(MAP_GEO.cloudCircle, MAP_MATS.inkStroke);
+    brush.rotation.x = -Math.PI / 2;
+    brush.rotation.z = rng() * Math.PI;
+    brush.position.set(x, y + 0.006, z);
+    const bs = randRange(rng, 1.3, 3.6);
+    brush.scale.set(bs * randRange(rng, 1.7, 3.0), bs * randRange(rng, 0.20, 0.42), 1);
+    border.add(brush);
+
+    const swirl = new THREE.Mesh(
+      new THREE.TorusGeometry(randRange(rng, 0.65, 1.75), 0.045, 6, 36, Math.PI * randRange(rng, 0.85, 1.65)),
+      MAP_MATS.inkStroke
+    );
     swirl.rotation.x = -Math.PI / 2;
     swirl.rotation.z = rng() * Math.PI * 2;
-    swirl.position.set(x, y + 0.015, z);
-    swirl.scale.y = randRange(rng, 0.45, 0.85);
+    swirl.position.set(x + randRange(rng, -0.7, 0.7), y + 0.03, z + randRange(rng, -0.7, 0.7));
+    swirl.scale.y = randRange(rng, 0.36, 0.78);
     border.add(swirl);
+  }
+
+  // A few distant ink mountains / pagodas as flat silhouettes for atmosphere.
+  const mountainMat = new THREE.MeshBasicMaterial({ color: 0x232323, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
+  for (let i = 0; i < 10; i++) {
+    const side = Math.floor(rng() * 4);
+    const offset = randRange(rng, -half * 1.05, half * 1.05);
+    const out = half + randRange(rng, 4.5, 8.0);
+    let x = offset, z = out * randSign(rng);
+    if (side % 2 === 1) { x = out * randSign(rng); z = offset; }
+    const peak = new THREE.Mesh(new THREE.ConeGeometry(randRange(rng, 0.9, 1.8), randRange(rng, 1.5, 3.2), 5), mountainMat);
+    peak.position.set(x, 0.18, z);
+    peak.rotation.x = -Math.PI / 2;
+    peak.rotation.z = rng() * Math.PI;
+    peak.scale.y = randRange(rng, 0.7, 1.4);
+    border.add(peak);
   }
   group.add(border);
 }
@@ -597,24 +630,39 @@ function addSquareCliff(group, half, rng) {
   }
 }
 function addPathNetwork(group, half, rng) {
-  // Cross-shaped dirt path + noisy patches gives the square arena a handmade feeling.
-  addFlat(group, MAP_GEO.dirtBlob, MAP_MATS.dirt, 0, 0, 0.065, half * 0.23, half * 1.78, 0.02);
-  addFlat(group, MAP_GEO.dirtBlob, MAP_MATS.dirt, 0, 0, 0.066, half * 1.78, half * 0.23, -0.02);
-  addFlat(group, MAP_GEO.dirtBlob, MAP_MATS.dirtLight, 0, -half * 0.18, 0.068, half * 0.28, half * 0.78, 0.05);
-  for (let i = 0; i < 30; i++) {
-    const x = randRange(rng, -half * 0.75, half * 0.75);
-    const z = randRange(rng, -half * 0.75, half * 0.75);
-    if (Math.abs(x) > half * 0.22 && Math.abs(z) > half * 0.22) continue;
-    addFlat(group, MAP_GEO.dirtBlob, rng() > 0.5 ? MAP_MATS.dirt : MAP_MATS.dirtLight, x, z, 0.071 + i * 0.0003, randRange(rng, 0.18, 0.50), randRange(rng, 0.08, 0.28), rng() * Math.PI);
+  // Dirt stays strictly inside the square. No more orange strips escaping past the walls.
+  const maxLen = half * 0.84;
+  addFlat(group, MAP_GEO.dirtBlob, MAP_MATS.dirt, 0, 0, 0.065, half * 0.27, maxLen, 0.01);
+  addFlat(group, MAP_GEO.dirtBlob, MAP_MATS.dirt, 0, 0, 0.066, maxLen, half * 0.27, -0.01);
+  addFlat(group, MAP_GEO.dirtBlob, MAP_MATS.dirtLight, 0, 0, 0.068, half * 0.48, half * 0.38, 0.08);
+
+  for (let i = 0; i < 22; i++) {
+    const x = randRange(rng, -half * 0.62, half * 0.62);
+    const z = randRange(rng, -half * 0.62, half * 0.62);
+    if (Math.abs(x) > half * 0.30 && Math.abs(z) > half * 0.30) continue;
+    if (!insideSquare(x, z, half, 0.85)) continue;
+    addFlat(
+      group,
+      MAP_GEO.dirtBlob,
+      rng() > 0.5 ? MAP_MATS.dirt : MAP_MATS.dirtLight,
+      x, z,
+      0.071 + i * 0.0003,
+      randRange(rng, 0.14, 0.38),
+      randRange(rng, 0.06, 0.22),
+      rng() * Math.PI
+    );
   }
 }
 function addGrassVariation(group, half, rng) {
-  for (let i = 0; i < 48; i++) {
-    const x = randRange(rng, -half + 0.7, half - 0.7);
-    const z = randRange(rng, -half + 0.7, half - 0.7);
-    if (Math.abs(x) < half * 0.34 && Math.abs(z) < half * 0.34) continue;
+  for (let i = 0; i < 32; i++) {
+    const x = randRange(rng, -half + 0.75, half - 0.75);
+    const z = randRange(rng, -half + 0.75, half - 0.75);
+    // Most grass variation hugs the edges; centre remains readable for combat.
+    const edgeBias = Math.max(Math.abs(x), Math.abs(z)) / half;
+    if (edgeBias < 0.58 && rng() < 0.72) continue;
+    if (Math.abs(x) < half * 0.30 && Math.abs(z) < half * 0.30) continue;
     const mat = rng() > 0.52 ? MAP_MATS.grassPatchA : (rng() > 0.4 ? MAP_MATS.grassPatchB : MAP_MATS.moss);
-    addFlat(group, MAP_GEO.grassBlob, mat, x, z, 0.073 + i * 0.0002, randRange(rng, 0.28, 0.9), randRange(rng, 0.16, 0.55), rng() * Math.PI);
+    addFlat(group, MAP_GEO.grassBlob, mat, x, z, 0.073 + i * 0.0002, randRange(rng, 0.22, 0.72), randRange(rng, 0.13, 0.45), rng() * Math.PI);
   }
 }
 
@@ -662,35 +710,35 @@ function buildIsland(size) {
   addStonePlaza(islandGroup, half);
 
   // Ruins and crystals: stronger scene identity, low geometry cost.
-  const shrineCount = 8;
+  const shrineCount = 6;
   for (let i = 0; i < shrineCount; i++) {
     const a = i / shrineCount * Math.PI * 2 + Math.PI / shrineCount;
     addCrystalPillar(islandGroup, Math.cos(a) * half * 0.58, Math.sin(a) * half * 0.58);
   }
-  for (let i = 0; i < 10; i++) {
-    const [x, z] = rimPoint((i + 0.15) / 10, half, randRange(rng, 0.7, 1.8));
+  for (let i = 0; i < 8; i++) {
+    const [x, z] = rimPoint((i + 0.15) / 8, half, randRange(rng, 0.7, 1.5));
     addRuinColumn(islandGroup, x, z, randRange(rng, 0.55, 1.25));
   }
 
   // Edge trees form a natural square frame but leave the centre clear for gameplay.
-  const treeCount = Math.min(MAP_STYLE.maxTrees, Math.max(14, Math.round(n * 1.25)));
+  const treeCount = Math.min(MAP_STYLE.maxTrees, Math.max(8, Math.round(n * 0.52)));
   for (let i = 0; i < treeCount; i++) {
     const [tx, tz] = rimPoint((i + rng() * 0.65) / treeCount, half, randRange(rng, 0.65, 1.75));
     if (Math.abs(tx) < half * 0.33 && Math.abs(tz) < half * 0.33) continue;
     addTree(islandGroup, tx, tz, randRange(rng, 0.78, 1.28), rng);
   }
 
-  const decorCount = Math.min(MAP_STYLE.maxDecor, Math.max(42, Math.round(n * 3.4)));
+  const decorCount = Math.min(MAP_STYLE.maxDecor, Math.max(24, Math.round(n * 1.65)));
   for (let i = 0; i < decorCount; i++) {
     const x = randRange(rng, -half + 0.45, half - 0.45);
     const z = randRange(rng, -half + 0.45, half - 0.45);
     if (!insideSquare(x, z, half, 0.3)) continue;
-    if (Math.abs(x) < half * 0.25 && Math.abs(z) < half * 0.25) continue;
+    if (Math.abs(x) < half * 0.34 && Math.abs(z) < half * 0.34) continue;
     const edgeBias = Math.max(Math.abs(x), Math.abs(z)) / half;
-    if (edgeBias < 0.54 && rng() < 0.38) continue;
+    if (edgeBias < 0.66 && rng() < 0.72) continue;
     const roll = rng();
-    if (roll < 0.32) addBush(islandGroup, x, z, randRange(rng, 0.62, 1.18));
-    else if (roll < 0.58) addPebble(islandGroup, x, z, randRange(rng, 0.56, 1.2), rng);
+    if (roll < 0.30) addBush(islandGroup, x, z, randRange(rng, 0.56, 1.02));
+    else if (roll < 0.44) addPebble(islandGroup, x, z, randRange(rng, 0.56, 1.2), rng);
     else if (roll < 0.86) addFlowerPatch(islandGroup, x, z, 3 + Math.floor(rng() * 5), rng);
     else addFallenLog(islandGroup, x, z, rng() * Math.PI, randRange(rng, 0.75, 1.25));
   }
@@ -701,7 +749,7 @@ function buildIsland(size) {
   addFence(islandGroup, -half * 0.72, half * 0.25, Math.PI / 2 + 0.05);
   addFence(islandGroup, half * 0.72, half * 0.25, Math.PI / 2 - 0.05);
   const bridge = new THREE.Group();
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 5; i++) {
     const plank = new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.10, 0.34), MAP_MATS.wood);
     plank.position.set((i - 3) * 0.015, 0.10, -half - 0.18 - i * 0.30);
     plank.rotation.y = (i % 2 ? 0.035 : -0.045);
