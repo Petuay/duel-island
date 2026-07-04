@@ -31,31 +31,25 @@ let selfChar = 'buddha';
 })();
 
 // ---------- 3D arena border model ----------
+// The .glb is already a complete square frame — just scale the whole thing to
+// fit the arena and drop it in, no tiling/repeating needed.
 let borderTemplate = null;
-const BORDER_TILE_SIZE = 1.88; // model footprint (X/Z) in world units, from the source .glb
+const BORDER_MODEL_SIZE = 1.88; // native footprint (X/Z) in world units, from the source .glb
 (() => {
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   loader.load('models/border.glb',
-    gltf => { borderTemplate = gltf.scene; addBorderTiles(islandGroup, currentIslandSize / 2); },
+    gltf => { borderTemplate = gltf.scene; addBorderFrame(islandGroup, currentIslandSize); },
     undefined,
     err => console.warn('[border] load failed:', err));
 })();
-function addBorderTiles(group, half) {
+function addBorderFrame(group, size) {
   if (!borderTemplate) return;
-  const perSide = Math.max(1, Math.round((half * 2) / BORDER_TILE_SIZE));
-  const step = (half * 2) / perSide;
-  for (let side = 0; side < 4; side++) {
-    for (let i = 0; i < perSide; i++) {
-      const u = -half + step * (i + 0.5);
-      const tile = skeletonClone(borderTemplate);
-      tile.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-      if (side === 0) { tile.position.set(u, 0, -half); tile.rotation.y = 0; }
-      else if (side === 1) { tile.position.set(half, 0, u); tile.rotation.y = Math.PI / 2; }
-      else if (side === 2) { tile.position.set(u, 0, half); tile.rotation.y = Math.PI; }
-      else { tile.position.set(-half, 0, u); tile.rotation.y = -Math.PI / 2; }
-      group.add(tile);
-    }
-  }
+  const frame = skeletonClone(borderTemplate);
+  frame.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  const scale = size / BORDER_MODEL_SIZE;
+  frame.scale.setScalar(scale);
+  frame.position.set(0, 0, 0);
+  group.add(frame);
 }
 
 function clipByName(tpl, name) {
@@ -688,7 +682,7 @@ function buildIsland(size) {
   base.renderOrder = 1;
   islandGroup.add(base);
 
-  addBorderTiles(islandGroup, half);
+  addBorderFrame(islandGroup, n);
 
   scene.add(islandGroup);
   return n;
