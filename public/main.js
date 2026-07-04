@@ -709,65 +709,6 @@ function buildIsland(size) {
   islandGroup.add(base);
 
   addSquareCliff(islandGroup, half, rng);
-  addInkCloudBorder(islandGroup, half, rng);
-  addPathNetwork(islandGroup, half, rng);
-  addGrassVariation(islandGroup, half, rng);
-  addStonePlaza(islandGroup, half);
-
-  // Ruins and crystals: stronger scene identity, low geometry cost.
-  const shrineCount = 4;
-  for (let i = 0; i < shrineCount; i++) {
-    const a = i / shrineCount * Math.PI * 2 + Math.PI / shrineCount;
-    addCrystalPillar(islandGroup, Math.cos(a) * half * 0.68, Math.sin(a) * half * 0.68);
-  }
-  for (let i = 0; i < 3; i++) {
-    const [x, z] = rimPoint((i + 0.28) / 3, half, randRange(rng, 0.75, 1.25));
-    addRuinColumn(islandGroup, x, z, randRange(rng, 0.55, 1.05));
-  }
-
-  // Edge trees form a natural square frame but leave the centre clear for gameplay.
-  const treeCount = MAP_STYLE.maxTrees;
-  const cornerInset = 1.15;
-  const cornerTrees = [
-    [-half + cornerInset, -half + cornerInset],
-    [ half - cornerInset, -half + cornerInset],
-    [-half + cornerInset,  half - cornerInset],
-    [ half - cornerInset,  half - cornerInset]
-  ];
-  for (let i = 0; i < treeCount; i++) {
-    const [tx, tz] = cornerTrees[i];
-    addTree(islandGroup, tx, tz, randRange(rng, 0.82, 1.12), rng);
-  }
-
-  const decorCount = Math.min(MAP_STYLE.maxDecor, Math.max(10, Math.round(n * 0.65)));
-  for (let i = 0; i < decorCount; i++) {
-    const x = randRange(rng, -half + 0.45, half - 0.45);
-    const z = randRange(rng, -half + 0.45, half - 0.45);
-    if (!insideSquare(x, z, half, 0.3)) continue;
-    if (Math.abs(x) < half * 0.34 && Math.abs(z) < half * 0.34) continue;
-    const edgeBias = Math.max(Math.abs(x), Math.abs(z)) / half;
-    if (edgeBias < 0.78 && rng() < 0.90) continue;
-    const roll = rng();
-    if (roll < 0.24) addBush(islandGroup, x, z, randRange(rng, 0.45, 0.82));
-    else if (roll < 0.44) addPebble(islandGroup, x, z, randRange(rng, 0.42, 0.88), rng);
-    else if (roll < 0.90) addFlowerPatch(islandGroup, x, z, 2 + Math.floor(rng() * 4), rng);
-    else addFallenLog(islandGroup, x, z, rng() * Math.PI, randRange(rng, 0.65, 1.0));
-  }
-
-  // Wood fences and front bridge make the square arena feel built, not just generated.
-  addFence(islandGroup, -half * 0.48, -half * 0.72, 0.04);
-  addFence(islandGroup, half * 0.48, -half * 0.72, -0.04);
-  addFence(islandGroup, -half * 0.72, half * 0.25, Math.PI / 2 + 0.05);
-  addFence(islandGroup, half * 0.72, half * 0.25, Math.PI / 2 - 0.05);
-  const bridge = new THREE.Group();
-  for (let i = 0; i < 5; i++) {
-    const plank = new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.10, 0.34), MAP_MATS.wood);
-    plank.position.set((i - 3) * 0.015, 0.10, -half - 0.18 - i * 0.30);
-    plank.rotation.y = (i % 2 ? 0.035 : -0.045);
-    plank.castShadow = plank.receiveShadow = true;
-    bridge.add(plank);
-  }
-  islandGroup.add(bridge);
 
   scene.add(islandGroup);
   return n;
