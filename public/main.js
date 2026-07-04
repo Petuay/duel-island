@@ -274,6 +274,42 @@ try {
   composer.setSize(window.innerWidth, window.innerHeight);
 } catch (e) { console.warn('[postfx] disabled', e); composer = null; }
 
+// ---------- Painted textures (user-generated art in public/textures/) ----------
+const TEX_LOADER = new THREE.TextureLoader();
+function loadTex(name) {
+  const t = TEX_LOADER.load('textures/' + name);
+  if ('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+// aspect = width/height of the source image, needed because textures load async
+const PAINTED = {
+  floor:   { tex: loadTex('floor.webp') },
+  crystal: { tex: loadTex('crystal.webp'), aspect: 435 / 378 },
+  trees: [
+    { tex: loadTex('tree0.webp'), aspect: 327 / 331 },  // twin pines
+    { tex: loadTex('tree1.webp'), aspect: 369 / 246 },  // pine + rocks
+    { tex: loadTex('tree3.webp'), aspect: 253 / 315 }   // tall single pine
+  ],
+  bushes: [
+    { tex: loadTex('tree2.webp'), aspect: 435 / 189 },
+    { tex: loadTex('tree4.webp'), aspect: 389 / 167 }
+  ],
+  clouds: [
+    { tex: loadTex('cloud0.webp'), aspect: 640 / 460 }, // ink ridge + pagoda
+    { tex: loadTex('cloud1.webp'), aspect: 640 / 552 }, // big ink swirl
+    { tex: loadTex('cloud3.webp'), aspect: 405 / 180 }  // small ink swirl
+  ]
+};
+// billboard prop standing on the ground: height h (world units), base at y=0
+function addPaintedSprite(group, def, x, z, h, opacity = 1) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: def.tex, transparent: true, opacity, depthWrite: false }));
+  sp.center.set(0.5, 0.04);
+  sp.scale.set(h * def.aspect, h, 1);
+  sp.position.set(x, 0.05, z);
+  group.add(sp);
+  return sp;
+}
+
 // ---------- Sky & sea of clouds (pure scenery — a floating island vibe) ----------
 function makeSkyTexture() {
   const c = document.createElement('canvas'); c.width = 8; c.height = 256;
@@ -311,6 +347,16 @@ scene.background = makeSkyTexture();
     const a = Math.random() * Math.PI * 2, rad = 15 + Math.random() * 78;
     sp.position.set(Math.cos(a) * rad, -2.5 - Math.random() * 8, Math.sin(a) * rad);
     const sc = 6 + Math.random() * 11; sp.scale.set(sc, sc * 0.6, 1);
+    g.add(sp);
+  }
+  // painted ink clouds drifting further out for the Chinese-ink mood
+  for (let i = 0; i < 16; i++) {
+    const def = PAINTED.clouds[i % PAINTED.clouds.length];
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: def.tex, transparent: true, opacity: 0.9, depthWrite: false }));
+    const a = Math.random() * Math.PI * 2, rad = 30 + Math.random() * 70;
+    const h = 7 + Math.random() * 9;
+    sp.scale.set(h * def.aspect, h, 1);
+    sp.position.set(Math.cos(a) * rad, -3.5 - Math.random() * 5 + h * 0.3, Math.sin(a) * rad);
     g.add(sp);
   }
   // distant misty rock peaks poking out of the clouds (Chinese-landscape backdrop)
@@ -443,27 +489,12 @@ function addStonePlaza(group, half) {
   }
 }
 function addTree(group, x, z, scale = 1, rng = Math.random) {
-  const t = new THREE.Mesh(MAP_GEO.trunk, MAP_MATS.trunk);
-  t.position.set(x, 0.24 * scale, z);
-  t.scale.setScalar(scale);
-  t.castShadow = true;
-  group.add(t);
-  const mat = rng() > 0.45 ? MAP_MATS.pineA : MAP_MATS.pineB;
-  for (let k = 0; k < 3; k++) {
-    const c = new THREE.Mesh(MAP_GEO.pineCone, mat);
-    c.position.set(x + randRange(rng, -0.025, 0.025) * scale, (0.53 + k * 0.27) * scale, z + randRange(rng, -0.025, 0.025) * scale);
-    c.scale.set(scale * (1.05 - k * 0.17), scale * (0.95 - k * 0.11), scale * (1.05 - k * 0.17));
-    c.rotation.y = rng() * Math.PI;
-    c.castShadow = true;
-    group.add(c);
-  }
+  const def = PAINTED.trees[Math.floor(rng() * PAINTED.trees.length)];
+  addPaintedSprite(group, def, x, z, 1.35 * scale);
 }
 function addBush(group, x, z, scale = 1) {
-  const b = new THREE.Mesh(MAP_GEO.bush, MAP_MATS.bush);
-  b.position.set(x, 0.17 * scale, z);
-  b.scale.set(scale * 1.25, scale * 0.55, scale * 1.05);
-  b.castShadow = b.receiveShadow = true;
-  group.add(b);
+  const def = PAINTED.bushes[Math.floor(Math.random() * PAINTED.bushes.length)];
+  addPaintedSprite(group, def, x, z, 0.55 * scale);
 }
 function addPebble(group, x, z, scale = 1, rng = Math.random) {
   const r = new THREE.Mesh(MAP_GEO.pebble, rng() > 0.45 ? MAP_MATS.stone : MAP_MATS.stoneDark);
@@ -540,9 +571,8 @@ function addInkCloudBorder(group, half, rng) {
   const border = new THREE.Group();
   const y = -0.16;
 
-  // Big soft white cloud masses outside the square arena.
-  // Kept as flat planes so the effect is clear but very cheap for WebGL.
-  const count = MAP_STYLE.maxInkClouds;
+  // Soft white mist cushions hugging the cliff so the island floats on cloud.
+  const count = Math.round(MAP_STYLE.maxInkClouds * 0.55);
   for (let i = 0; i < count; i++) {
     const side = Math.floor(rng() * 4);
     const offset = randRange(rng, -half * 1.18, half * 1.18);
@@ -559,47 +589,20 @@ function addInkCloudBorder(group, half, rng) {
     border.add(cloud);
   }
 
-  // Thick black ink-wash brush strokes behind the clouds.
-  for (let i = 0; i < 52; i++) {
-    const side = Math.floor(rng() * 4);
-    const offset = randRange(rng, -half * 1.22, half * 1.22);
-    const out = half + randRange(rng, 1.15, 5.9);
-    let x = offset, z = out * randSign(rng);
-    if (side % 2 === 1) { x = out * randSign(rng); z = offset; }
-
-    const brush = new THREE.Mesh(MAP_GEO.cloudCircle, MAP_MATS.inkStroke);
-    brush.rotation.x = -Math.PI / 2;
-    brush.rotation.z = rng() * Math.PI;
-    brush.position.set(x, y + 0.006, z);
-    const bs = randRange(rng, 1.3, 3.6);
-    brush.scale.set(bs * randRange(rng, 1.9, 3.4), bs * randRange(rng, 0.22, 0.48), 1);
-    border.add(brush);
-
-    const swirl = new THREE.Mesh(
-      new THREE.TorusGeometry(randRange(rng, 0.65, 1.75), 0.045, 6, 36, Math.PI * randRange(rng, 0.85, 1.65)),
-      MAP_MATS.inkStroke
-    );
-    swirl.rotation.x = -Math.PI / 2;
-    swirl.rotation.z = rng() * Math.PI * 2;
-    swirl.position.set(x + randRange(rng, -0.7, 0.7), y + 0.03, z + randRange(rng, -0.7, 0.7));
-    swirl.scale.y = randRange(rng, 0.36, 0.78);
-    border.add(swirl);
-  }
-
-  // A few distant ink mountains / pagodas as flat silhouettes for atmosphere.
-  const mountainMat = new THREE.MeshBasicMaterial({ color: 0x232323, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
-  for (let i = 0; i < 12; i++) {
-    const side = Math.floor(rng() * 4);
-    const offset = randRange(rng, -half * 1.05, half * 1.05);
-    const out = half + randRange(rng, 4.5, 8.0);
-    let x = offset, z = out * randSign(rng);
-    if (side % 2 === 1) { x = out * randSign(rng); z = offset; }
-    const peak = new THREE.Mesh(new THREE.ConeGeometry(randRange(rng, 0.9, 1.8), randRange(rng, 1.5, 3.2), 5), mountainMat);
-    peak.position.set(x, 0.18, z);
-    peak.rotation.x = -Math.PI / 2;
-    peak.rotation.z = rng() * Math.PI;
-    peak.scale.y = randRange(rng, 0.7, 1.4);
-    border.add(peak);
+  // Painted ink-cloud billboards ringing the arena (the user's brush art).
+  for (let i = 0; i < 14; i++) {
+    const def = PAINTED.clouds[Math.floor(rng() * PAINTED.clouds.length)];
+    const t = (i + rng() * 0.6) / 14;
+    const a = t * Math.PI * 2;
+    const out = half + randRange(rng, 2.2, 5.5);
+    const h = randRange(rng, 2.4, 4.6);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: def.tex, transparent: true, opacity: randRange(rng, 0.78, 0.95), depthWrite: false
+    }));
+    sp.center.set(0.5, 0.15);
+    sp.scale.set(h * def.aspect, h, 1);
+    sp.position.set(Math.cos(a) * out, y - 0.9 - rng() * 0.8, Math.sin(a) * out);
+    border.add(sp);
   }
   group.add(border);
 }
@@ -686,34 +689,28 @@ function buildIsland(size) {
   const half = n / 2;
   const rng = mulberry32(1000 + n * 37); // stable map per island size; no flickering rebuilds
 
-  // Square playable field. One broad mesh hides the old blocky look, while game logic remains tile-based.
-  const base = new THREE.Mesh(new THREE.BoxGeometry(n, 0.64, n), MAP_MATS.grassBase);
+  // Square playable field wearing the painted ground texture (dais is drawn into it).
+  const groundMat = new THREE.MeshStandardMaterial({ map: PAINTED.floor.tex, roughness: 1, metalness: 0 });
+  const sideMat = MAP_MATS.cliff;
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(n, 0.64, n),
+    [sideMat, sideMat, groundMat, MAP_MATS.cliffDark, sideMat, sideMat]
+  );
   base.position.y = -0.32;
   base.receiveShadow = true;
   islandGroup.add(base);
 
-  // Subtle grid seams only at the border, not as obvious square blocks.
-  for (let i = 0; i <= n; i++) {
-    if (i % 2) continue;
-    const pos = -half + i;
-    const lineMat = new THREE.MeshBasicMaterial({ color: 0x436f3a, transparent: true, opacity: 0.08, depthWrite: false });
-    const lx = new THREE.Mesh(new THREE.PlaneGeometry(0.018, n), lineMat);
-    lx.rotation.x = -Math.PI / 2; lx.position.set(pos, 0.083, 0); islandGroup.add(lx);
-    const lz = new THREE.Mesh(new THREE.PlaneGeometry(n, 0.018), lineMat);
-    lz.rotation.x = -Math.PI / 2; lz.position.set(0, 0.084, pos); islandGroup.add(lz);
-  }
-
   addSquareCliff(islandGroup, half, rng);
   addInkCloudBorder(islandGroup, half, rng);
-  addPathNetwork(islandGroup, half, rng);
-  addGrassVariation(islandGroup, half, rng);
-  addStonePlaza(islandGroup, half);
 
-  // Ruins and crystals: stronger scene identity, low geometry cost.
+  // Painted centre crystal standing on the dais baked into the floor art.
+  addPaintedSprite(islandGroup, PAINTED.crystal, 0, 0, Math.max(1.5, half * 0.30));
+
+  // Smaller shrine crystals around the arena.
   const shrineCount = 4;
   for (let i = 0; i < shrineCount; i++) {
     const a = i / shrineCount * Math.PI * 2 + Math.PI / shrineCount;
-    addCrystalPillar(islandGroup, Math.cos(a) * half * 0.68, Math.sin(a) * half * 0.68);
+    addPaintedSprite(islandGroup, PAINTED.crystal, Math.cos(a) * half * 0.68, Math.sin(a) * half * 0.68, 0.85);
   }
   for (let i = 0; i < 3; i++) {
     const [x, z] = rimPoint((i + 0.28) / 3, half, randRange(rng, 0.75, 1.25));
