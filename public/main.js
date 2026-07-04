@@ -283,43 +283,34 @@ function loadTex(name) {
 }
 const PAINTED = {
   floor: { tex: loadTex('floor.webp') },
-  outerGround: { tex: loadTex('outer_ground.webp') }
+  cloudRidge: { tex: loadTex('cloud_ridge.webp'), aspect: 640 / 460 },
+  cloudBig: { tex: loadTex('cloud_big.webp'), aspect: 640 / 552 },
+  cloudSmall: { tex: loadTex('cloud_small.webp'), aspect: 405 / 180 }
 };
-PAINTED.outerGround.tex.wrapS = PAINTED.outerGround.tex.wrapT = THREE.RepeatWrapping;
-PAINTED.outerGround.tex.repeat.set(30, 30);
 
-// ---------- Sky & sea of clouds (pure scenery — a floating island vibe) ----------
-function makeSkyTexture() {
-  const c = document.createElement('canvas'); c.width = 8; c.height = 256;
-  const ctx = c.getContext('2d');
-  const g = ctx.createLinearGradient(0, 0, 0, 256);
-  g.addColorStop(0, '#9fc7ee'); g.addColorStop(0.55, '#dcebf7'); g.addColorStop(1, '#f1dfcf');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, 8, 256);
-  const t = new THREE.CanvasTexture(c);
-  if ('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-function makeCloudTexture() {
-  const s = 128; const c = document.createElement('canvas'); c.width = c.height = s;
-  const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-  g.addColorStop(0, 'rgba(255,255,255,0.95)');
-  g.addColorStop(0.55, 'rgba(240,246,252,0.55)');
-  g.addColorStop(1, 'rgba(240,246,252,0)');
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2); ctx.fill();
-  return new THREE.CanvasTexture(c);
-}
-scene.background = makeSkyTexture();
+// Flat pale background, matching the reference art (far outside the ink clouds is plain).
+scene.background = new THREE.Color(0xf1e6da);
 
-// painted rock/moss ground filling the area outside the arena
-const outerGround = new THREE.Mesh(
-  new THREE.PlaneGeometry(300, 300),
-  new THREE.MeshStandardMaterial({ map: PAINTED.outerGround.tex, roughness: 1 })
-);
-outerGround.rotation.x = -Math.PI / 2;
-outerGround.position.y = -0.4;
-outerGround.receiveShadow = true;
-scene.add(outerGround);
+// Painted ink-cloud swirls hugging the outside of the arena walls.
+function addPaintedCloudBorder(group, half) {
+  const defs = [PAINTED.cloudRidge, PAINTED.cloudBig, PAINTED.cloudSmall];
+  const rng = mulberry32(4242);
+  const ringCount = 10;
+  for (let i = 0; i < ringCount; i++) {
+    const side = i % 4;
+    const t = randRange(rng, -0.9, 0.9);
+    const out = half + randRange(rng, 0.6, 2.2);
+    let x = t * half, z = out * (side < 2 ? -1 : 1);
+    if (side % 2 === 1) { x = out * (side === 1 ? 1 : -1); z = t * half; }
+    const def = defs[Math.floor(rng() * defs.length)];
+    const h = randRange(rng, 3.2, 5.6);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: def.tex, transparent: true, opacity: 0.95, depthWrite: false }));
+    sp.center.set(0.5, 0.35);
+    sp.scale.set(h * def.aspect, h, 1);
+    sp.position.set(x, -0.1, z);
+    group.add(sp);
+  }
+}
 
 // small stylized decorations that cling to the island rim (pure scenery)
 function makePineTree(x, z) {
@@ -691,6 +682,8 @@ function buildIsland(size) {
   base.position.y = -0.32;
   base.receiveShadow = true;
   islandGroup.add(base);
+
+  addPaintedCloudBorder(islandGroup, half);
 
   scene.add(islandGroup);
   return n;
