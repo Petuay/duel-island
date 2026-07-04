@@ -15,13 +15,13 @@ const socket = io();
 const MODEL_HEIGHT = 1.35;   // world height each model is scaled to fit
 const MODEL_FACE_Y = 0;      // extra yaw so a model faces its aim (+Z); flip to Math.PI if backwards
 const CHARACTERS = [
-  { id: 'buddha', name: 'บุดด้า' },
-  { id: 'jesus', name: 'จีซัส' },
-  { id: 'kongming', name: 'ขงเบ้ง' },
-  { id: 'buu', name: 'บูบู้' },
-  { id: 'guanyin', name: 'กวนอิม' },
-  { id: 'khanthi', name: 'คานที' },
-  { id: 'hanuman', name: 'หนุมาน' }
+  { id: 'buddha', name: 'บุดด้า', icon: '🙏' },
+  { id: 'jesus', name: 'จีซัส', icon: '✝️' },
+  { id: 'kongming', name: 'ขงเบ้ง', icon: '🎓' },
+  { id: 'buu', name: 'บูบู้', icon: '👦' },
+  { id: 'guanyin', name: 'กวนอิม', icon: '🌸' },
+  { id: 'khanthi', name: 'คานที', icon: '🚀' },
+  { id: 'hanuman', name: 'หนุมาน', icon: '🐒' }
 ];
 const BOT_CHAR_ID = 'bot'; // reserved model for bot players only — not in CHARACTERS, so it never shows in the picker
 const charTemplates = {};    // id -> { scene, animations }
@@ -106,7 +106,7 @@ const charPickerEl = $('charPicker');
 CHARACTERS.forEach(c => {
   const btn = document.createElement('button');
   btn.className = 'charBtn';
-  btn.textContent = c.name;
+  btn.innerHTML = `<span class="charBtnIcon">${c.icon}</span><span>${c.name}</span>`;
   btn.addEventListener('click', () => {
     selfChar = c.id;
     socket.emit('setChar', { char: c.id });
@@ -116,7 +116,58 @@ CHARACTERS.forEach(c => {
 });
 function updateCharPickerUI() {
   [...charPickerEl.children].forEach((btn, i) => btn.classList.toggle('active', CHARACTERS[i].id === selfChar));
+  setPreviewCharacter(selfChar);
 }
+
+// ---------- Character picker 3D preview (rotating model, lobby only) ----------
+const previewCanvas = $('charPreviewCanvas');
+const previewRenderer = new THREE.WebGLRenderer({ canvas: previewCanvas, antialias: true, alpha: true });
+previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
+const previewScene = new THREE.Scene();
+const previewCamera = new THREE.PerspectiveCamera(32, 1, 0.1, 20);
+previewCamera.position.set(0, 1.05, 3.1);
+previewCamera.lookAt(0, 0.85, 0);
+previewScene.add(new THREE.HemisphereLight(0xffffff, 0x8a97a8, 1.15));
+const previewSun = new THREE.DirectionalLight(0xffffff, 0.65);
+previewSun.position.set(2, 4, 3);
+previewScene.add(previewSun);
+let previewModel = null;
+let previewMixer = null;
+let previewWantedChar = null;
+function setPreviewCharacter(charId) {
+  previewWantedChar = charId;
+  const tpl = charTemplates[charId];
+  if (!tpl) return; // not loaded yet; the retry interval below will call this again
+  if (previewModel) { previewScene.remove(previewModel); previewModel = null; }
+  previewMixer = null;
+  const model = skeletonClone(tpl.scene);
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3(), center = new THREE.Vector3();
+  box.getSize(size); box.getCenter(center);
+  const s = 1.7 / (size.y || 1);
+  model.scale.setScalar(s);
+  model.position.set(-center.x * s, -box.min.y * s, -center.z * s);
+  previewScene.add(model);
+  previewModel = model;
+  const idle = clipByName(tpl, 'Idle');
+  if (idle) {
+    previewMixer = new THREE.AnimationMixer(model);
+    previewMixer.clipAction(idle).play();
+  }
+  const c = CHARACTERS.find(c => c.id === charId);
+  $('charPreviewName').textContent = c ? `${c.icon} ${c.name}` : charId;
+}
+// characters load asynchronously; keep retrying until the wanted one is ready
+setInterval(() => { if (previewWantedChar && !previewModel) setPreviewCharacter(previewWantedChar); }, 400);
+function resizePreviewCanvas() {
+  const w = previewCanvas.clientWidth, h = previewCanvas.clientHeight;
+  if (!w || !h) return;
+  previewRenderer.setSize(w, h, false);
+  previewCamera.aspect = w / h;
+  previewCamera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resizePreviewCanvas);
 
 const homeScreen = $('homeScreen');
 const lobbyScreen = $('lobbyScreen');
@@ -151,6 +202,42 @@ $('btnEndGame').addEventListener('click', () => {
   if (confirm('จบเกมตอนนี้แล้วพาทุกคนกลับไปที่ล็อบบี้?')) socket.emit('endToLobby');
 });
 $('btnAddBot').addEventListener('click', () => socket.emit('addBot'));
+
+// ---------- Open rooms list (home screen) ----------
+let openRoomsCache = [];
+function joinRoomByCode(code) {
+  let name = ($('nameJoin').value || $('nameCreate').value || '').trim();
+  if (!name) {
+    name = (window.prompt('ใส่ชื่อของคุณก่อนเข้าร่วมห้อง') || '').trim();
+    if (!name) return;
+  }
+  socket.emit('joinRoom', { code, name });
+}
+function renderOpenRooms() {
+  const list = $('openRoomsList');
+  list.innerHTML = '';
+  if (!openRoomsCache.length) {
+    list.innerHTML = '<li class="openRoomsEmpty">ยังไม่มีห้องที่เปิดอยู่</li>';
+    return;
+  }
+  openRoomsCache.forEach(r => {
+    const li = document.createElement('li');
+    li.className = 'openRoomRow';
+    const full = r.playerCount >= r.maxPlayers;
+    const info = document.createElement('span');
+    info.className = 'openRoomInfo';
+    info.innerHTML = `<b>${escapeHtml(r.code)}</b> · ${escapeHtml(r.hostName)} · ${r.playerCount}/${r.maxPlayers} คน`;
+    const btn = document.createElement('button');
+    btn.className = 'openRoomJoinBtn';
+    btn.textContent = full ? 'เต็ม' : 'เข้าร่วม';
+    btn.disabled = full;
+    btn.addEventListener('click', () => joinRoomByCode(r.code));
+    li.appendChild(info);
+    li.appendChild(btn);
+    list.appendChild(li);
+  });
+}
+socket.on('roomList', ({ rooms }) => { openRoomsCache = rooms; renderOpenRooms(); });
 
 // ---------- Reference guide (collapsible list of all cards + powers) ----------
 function buildGuide() {
@@ -247,6 +334,7 @@ function showScreen(name) {
   hud.classList.toggle('hidden', name !== 'game');
   gameOverPanel.classList.toggle('hidden', name !== 'gameover');
   canvas.classList.toggle('hidden', name !== 'game');
+  if (name === 'lobby') requestAnimationFrame(resizePreviewCanvas);
 }
 
 // ---------- Three.js scene ----------
@@ -2018,6 +2106,12 @@ function animate() {
   }
   if (composer) composer.render();
   else renderer.render(scene, camera);
+
+  if (!lobbyScreen.classList.contains('hidden')) {
+    if (previewModel) previewModel.rotation.y += dt * 0.8;
+    if (previewMixer) previewMixer.update(dt);
+    previewRenderer.render(previewScene, previewCamera);
+  }
 }
 animate();
 

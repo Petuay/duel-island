@@ -125,15 +125,29 @@ button.secondary:active { box-shadow: 0 2px 0 #d9902a; }
 }
 
 /* character selection blocks */
+.lobbyPanelWide { min-width: 620px; max-width: 720px; }
+.lobbyBody { display: flex; gap: 16px; margin: 6px 0 14px; text-align: left; align-items: stretch; }
+.charPreviewBox {
+  width: 190px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 6px; background: #eef6fd; border: 2px solid #dcebf7;
+  border-radius: 18px; padding: 10px;
+}
+#charPreviewCanvas { width: 100%; aspect-ratio: 1 / 1; display: block; }
+.charPreviewName {
+  font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 15px; color: #2f6fb0;
+}
+.charPickSide { flex: 1; min-width: 0; }
 .charPicker {
-  display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 14px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
 }
 .charBtn {
-  width: auto; margin: 0; padding: 10px 18px; font-size: 16px; font-weight: 800;
+  width: auto; margin: 0; padding: 12px 6px; font-size: 12.5px; font-weight: 800;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   color: #34506e; background: #eaf3fb; box-shadow: 0 3px 0 #c7dceb;
-  border: 3px solid transparent; border-radius: 12px; flex-shrink: 0;
+  border: 3px solid transparent; border-radius: 14px;
   transition: transform .1s ease, box-shadow .1s ease, border-color .1s ease, background .1s ease;
 }
+.charBtn .charBtnIcon { font-size: 24px; line-height: 1; }
 .charBtn:hover {
   transform: translateY(-3px);
   border-color: #6fb1e8; box-shadow: 0 6px 0 #c7dceb;
@@ -143,6 +157,25 @@ button.secondary:active { box-shadow: 0 2px 0 #d9902a; }
   border-color: #ff9f2e; box-shadow: 0 4px 0 #d9902a, 0 0 14px rgba(255,159,46,0.6);
   transform: translateY(-2px);
 }
+
+/* open-rooms list (home screen) */
+.openRoomsBox {
+  margin-top: 14px; text-align: left; background: #f4faff; border: 2px solid #dcebf7;
+  border-radius: 16px; padding: 12px 14px;
+}
+.openRoomsTitle {
+  font-family: 'Baloo 2', sans-serif; font-weight: 800; color: #2f6fb0;
+  text-align: center; margin-bottom: 8px; font-size: 14px;
+}
+.openRoomsList { list-style: none; margin: 0; padding: 0; max-height: 160px; overflow-y: auto; }
+.openRoomsEmpty { text-align: center; color: #8298b8; font-size: 13px; padding: 8px 0; }
+.openRoomRow {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: #fff; border: 2px solid #e2eef8; border-radius: 12px; padding: 8px 12px; margin-bottom: 6px;
+}
+.openRoomInfo { font-size: 13px; color: #3a4f6b; font-weight: 600; }
+.openRoomInfo b { color: #2f6fb0; font-family: 'Baloo 2', sans-serif; letter-spacing: 2px; }
+.openRoomJoinBtn { width: auto; margin: 0; padding: 6px 14px; font-size: 13px; }
 
 .roomCode {
   font-family: 'Baloo 2', sans-serif;

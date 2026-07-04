@@ -119,6 +119,23 @@ const MAX_PLAYERS = 10;
 /** @type {Map<string, Room>} */
 const rooms = new Map();
 
+function publicRoomsSummary() {
+  return [...rooms.values()]
+    .filter(r => r.state === 'lobby')
+    .map(r => {
+      const host = r.players.get(r.hostId);
+      return {
+        code: r.code,
+        playerCount: r.realPlayerCount(),
+        maxPlayers: MAX_PLAYERS,
+        hostName: host ? host.name : '???'
+      };
+    });
+}
+function broadcastPublicRooms() {
+  io.emit('roomList', { rooms: publicRoomsSummary() });
+}
+
 function genCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code;
@@ -252,6 +269,7 @@ class Room {
       round: this.round,
       players: this.publicPlayers()
     });
+    broadcastPublicRooms();
   }
 
   aliveIds() {
@@ -655,6 +673,7 @@ class Room {
 
 io.on('connection', socket => {
   let currentRoomCode = null;
+  socket.emit('roomList', { rooms: publicRoomsSummary() });
 
   socket.on('createRoom', ({ name }) => {
     const code = genCode();
@@ -774,6 +793,7 @@ io.on('connection', socket => {
     if (room.realPlayerCount() === 0) {
       clearTimeout(room.timer);
       rooms.delete(room.code);
+      broadcastPublicRooms();
       return;
     }
     if (room.hostId === socket.id) {

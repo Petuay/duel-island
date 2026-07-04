@@ -32,17 +32,31 @@
         <button id="btnCreate">สร้างห้องใหม่</button>
       </div>
       <div class="err" id="homeErr"></div>
+      <div class="openRoomsBox">
+        <div class="openRoomsTitle">ห้องที่เปิดอยู่</div>
+        <ul id="openRoomsList" class="openRoomsList">
+          <li class="openRoomsEmpty">ยังไม่มีห้องที่เปิดอยู่</li>
+        </ul>
+      </div>
     </div>
   </div>
 
   <!-- LOBBY SCREEN -->
   <div id="lobbyScreen" class="screen hidden">
-    <div class="panel">
+    <div class="panel lobbyPanelWide">
       <h1>ห้องรอผู้เล่น</h1>
       <div class="roomCode" id="lobbyCode">----</div>
       <ul id="lobbyPlayers"></ul>
-      <div class="hatPickerLabel">เลือกตัวละครของคุณ</div>
-      <div id="charPicker" class="charPicker"></div>
+      <div class="lobbyBody">
+        <div class="charPreviewBox">
+          <canvas id="charPreviewCanvas"></canvas>
+          <div class="charPreviewName" id="charPreviewName">-</div>
+        </div>
+        <div class="charPickSide">
+          <div class="hatPickerLabel">เลือกตัวละครก่อนเริ่มเกม</div>
+          <div id="charPicker" class="charPicker"></div>
+        </div>
+      </div>
       <button id="btnAddBot" class="secondary hidden">🤖 เพิ่มบอท</button>
       <button id="btnStart">เริ่มเกม</button>
       <div class="err" id="lobbyErr"></div>
