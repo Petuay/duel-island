@@ -244,7 +244,8 @@ sun.shadow.camera.top = 25; sun.shadow.camera.bottom = -25;
 scene.add(sun);
 
 // soft image-based lighting from an HDRI sky (the cartoon gradient stays as the visible background)
-new RGBELoader().load('hdri/table_mountain_1_puresky_2k.hdr', hdr => {
+// switch the filename to swap moods: table_mountain_1_puresky_2k (bright) / kiara_1_dawn_2k (dawn)
+new RGBELoader().load('hdri/kiara_1_dawn_2k.hdr', hdr => {
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromEquirectangular(hdr).texture;
   if ('environmentIntensity' in scene) scene.environmentIntensity = 0.8;
