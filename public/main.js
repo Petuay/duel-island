@@ -307,35 +307,6 @@ function makeCloudTexture() {
   return new THREE.CanvasTexture(c);
 }
 scene.background = makeSkyTexture();
-(function buildScenery() {
-  const g = new THREE.Group();
-  // a soft cloud "floor" far below so there's no empty void under the island
-  const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(150, 40),
-    new THREE.MeshBasicMaterial({ color: 0xeef4fb, transparent: true, opacity: 0.9 })
-  );
-  floor.rotation.x = -Math.PI / 2; floor.position.y = -12; g.add(floor);
-  // scattered cloud puffs forming a sea of clouds around & below the island
-  const cloudTex = makeCloudTexture();
-  for (let i = 0; i < 80; i++) {
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: cloudTex, transparent: true, opacity: 0.85, depthWrite: false }));
-    const a = Math.random() * Math.PI * 2, rad = 15 + Math.random() * 78;
-    sp.position.set(Math.cos(a) * rad, -2.5 - Math.random() * 8, Math.sin(a) * rad);
-    const sc = 6 + Math.random() * 11; sp.scale.set(sc, sc * 0.6, 1);
-    g.add(sp);
-  }
-  // distant misty rock peaks poking out of the clouds (Chinese-landscape backdrop)
-  const peakMat = new THREE.MeshStandardMaterial({ color: 0xb4c2d3, roughness: 1, flatShading: true, transparent: true, opacity: 0.85 });
-  for (let i = 0; i < 13; i++) {
-    const a = Math.random() * Math.PI * 2, rad = 55 + Math.random() * 55;
-    const h = 9 + Math.random() * 18, r = 3 + Math.random() * 4;
-    const p = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), peakMat);
-    p.position.set(Math.cos(a) * rad, -7 + h / 2, Math.sin(a) * rad);
-    p.rotation.y = Math.random() * Math.PI;
-    g.add(p);
-  }
-  scene.add(g);
-})();
 
 // small stylized decorations that cling to the island rim (pure scenery)
 function makePineTree(x, z) {
@@ -707,8 +678,6 @@ function buildIsland(size) {
   base.position.y = -0.32;
   base.receiveShadow = true;
   islandGroup.add(base);
-
-  addSquareCliff(islandGroup, half, rng);
 
   scene.add(islandGroup);
   return n;
