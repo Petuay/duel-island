@@ -93,13 +93,22 @@ function placeGlbProp(template, group, x, z, targetHeight, rotY = 0) {
 // a dedicated group so re-running addCornerDecor (island resize, or a prop template
 // arriving late) clears and rebuilds instead of piling up duplicate instances
 const cornerDecorGroup = new THREE.Group();
-// one crystal shard per corner, inset from the border frame
+// one crystal shard per corner, inset from the border frame.
+// each split piece keeps the native lean of its source quadrant (crystal0 = -x/-z,
+// crystal1 = -x/+z, crystal2 = +x/-z, crystal3 = +x/+z) — pairing it with the
+// matching corner sign (and no extra rotation) keeps all 4 corners a consistent
+// mirror image of each other instead of a mismatched/rotated look on some sides.
 function addCornerDecor(size) {
   while (cornerDecorGroup.children.length) cornerDecorGroup.remove(cornerDecorGroup.children[0]);
   const half = size / 2;
-  const corners = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
-  corners.forEach(([sx, sz], i) => {
-    placeGlbProp(crystalTemplates[i], cornerDecorGroup, sx * half * 0.6, sz * half * 0.6, CRYSTAL_MODEL_HEIGHT, i * 0.9);
+  const corners = [
+    { sx: -1, sz: -1, idx: 0 },
+    { sx: -1, sz: 1, idx: 1 },
+    { sx: 1, sz: -1, idx: 2 },
+    { sx: 1, sz: 1, idx: 3 }
+  ];
+  corners.forEach(({ sx, sz, idx }) => {
+    placeGlbProp(crystalTemplates[idx], cornerDecorGroup, sx * half * 0.6, sz * half * 0.6, CRYSTAL_MODEL_HEIGHT, 0);
   });
 }
 
