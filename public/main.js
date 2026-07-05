@@ -226,6 +226,50 @@ function resizePreviewCanvas() {
 }
 window.addEventListener('resize', resizePreviewCanvas);
 
+// ---------- Winner 3D showcase (game-over screen) ----------
+const winnerCanvas = $('winnerCanvas');
+const winnerRenderer = new THREE.WebGLRenderer({ canvas: winnerCanvas, antialias: true, alpha: true });
+winnerRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+winnerRenderer.outputColorSpace = THREE.SRGBColorSpace;
+const winnerScene = new THREE.Scene();
+const winnerCamera = new THREE.PerspectiveCamera(32, 1, 0.1, 20);
+winnerCamera.position.set(0, 1.05, 3.2);
+winnerCamera.lookAt(0, 0.85, 0);
+winnerScene.add(new THREE.HemisphereLight(0xffffff, 0x8a97a8, 1.2));
+const winnerSun = new THREE.DirectionalLight(0xffffff, 0.7);
+winnerSun.position.set(2, 4, 3);
+winnerScene.add(winnerSun);
+let winnerModel = null;
+let winnerMixer = null;
+let winnerWantedChar = null;
+function setWinnerCharacter(charId) {
+  winnerWantedChar = charId;
+  const tpl = charTemplates[charId] || charTemplates[BOT_CHAR_ID];
+  if (!tpl) return; // model not loaded yet; retry interval below picks it up
+  if (winnerModel) { winnerScene.remove(winnerModel); winnerModel = null; }
+  winnerMixer = null;
+  const model = skeletonClone(tpl.scene);
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3(), center = new THREE.Vector3();
+  box.getSize(size); box.getCenter(center);
+  const s = 1.7 / (size.y || 1);
+  model.scale.setScalar(s);
+  model.position.set(-center.x * s, -box.min.y * s, -center.z * s);
+  winnerScene.add(model);
+  winnerModel = model;
+  const idle = clipByName(tpl, 'Idle');
+  if (idle) { winnerMixer = new THREE.AnimationMixer(model); winnerMixer.clipAction(idle).play(); }
+}
+setInterval(() => { if (winnerWantedChar && !winnerModel) setWinnerCharacter(winnerWantedChar); }, 400);
+function resizeWinnerCanvas() {
+  const w = winnerCanvas.clientWidth, h = winnerCanvas.clientHeight;
+  if (!w || !h) return;
+  winnerRenderer.setSize(w, h, false);
+  winnerCamera.aspect = w / h;
+  winnerCamera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resizeWinnerCanvas);
+
 const homeScreen = $('homeScreen');
 const lobbyScreen = $('lobbyScreen');
 const hud = $('hud');
@@ -369,17 +413,42 @@ socket.on('roomUpdate', data => {
   }
 });
 
-socket.on('gameOver', ({ winnerId, winnerName }) => {
+socket.on('gameOver', ({ winner, standings }) => {
   showScreen('gameover');
-  if (winnerId) {
-    $('gameOverTitle').textContent = winnerId === selfId ? '🏆 คุณชนะ!' : `🏆 ${winnerName} ชนะ!`;
+  const winnerBox = $('winnerBox') || document.querySelector('.winnerBox');
+  if (winner) {
+    $('gameOverTitle').textContent = winner.id === selfId ? '🏆 คุณชนะ!' : `🏆 ${escapeHtml(winner.name)} ชนะ!`;
     $('gameOverSubtitle').textContent = 'รอดคนเดียวบนเกาะ';
+    $('winnerName').textContent = winner.name;
+    if (winnerBox) winnerBox.classList.remove('hidden');
+    setWinnerCharacter(winner.char || 'buddha');
+    requestAnimationFrame(resizeWinnerCanvas);
   } else {
     $('gameOverTitle').textContent = '💥 เสมอ ไม่มีผู้รอด';
     $('gameOverSubtitle').textContent = 'ทุกคนยิงโดนกันหมด';
+    if (winnerBox) winnerBox.classList.add('hidden');
+    winnerWantedChar = null;
+    if (winnerModel) { winnerScene.remove(winnerModel); winnerModel = null; }
   }
+  renderStandings(standings || []);
   $('btnPlayAgain').classList.toggle('hidden', !isHost);
+  $('gameOverWait').classList.toggle('hidden', isHost);
 });
+
+function renderStandings(standings) {
+  const body = $('standingsBody');
+  body.innerHTML = '';
+  standings.forEach(s => {
+    const medal = s.rank === 1 ? '🥇' : s.rank === 2 ? '🥈' : s.rank === 3 ? '🥉' : s.rank;
+    const tr = document.createElement('tr');
+    if (s.isWinner) tr.className = 'standingsWinner';
+    tr.innerHTML = `<td class="stRank">${medal}</td>
+      <td class="stName"><span class="orderDot" style="background:${s.color}"></span>${s.isBot ? '🤖 ' : ''}${escapeHtml(s.name)}${s.id === selfId ? ' (คุณ)' : ''}</td>
+      <td class="stRound">${s.roundReached}</td>
+      <td class="stKills">${s.kills}</td>`;
+    body.appendChild(tr);
+  });
+}
 
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1612,7 +1681,73 @@ canvas.addEventListener('click', e => {
 
 let selfColor = '#3498db';
 let placing = false;
-let phase = 'placing'; // 'cardpick' (choose 1 of 3) | 'placing' (walk/aim/use card)
+let phase = 'placing'; // 'powerpick' (choose latent power, once) | 'cardpick' (1 of 3) | 'placing'
+let myPower = null;
+
+// Match start (once): choose 1 of 3 latent powers before the first round.
+socket.on('powerPickStart', data => {
+  currentIslandSize = buildIsland(data.islandSize);
+  currentRound = 0;
+  clearRevealMeshes();
+  clearSpectatorMeshes();
+  if (selfMesh) { scene.remove(selfMesh); selfMesh = null; }
+  if (selfLaser) { scene.remove(selfLaser); selfLaser = null; }
+
+  phase = 'powerpick';
+  placing = false;
+  spectating = false;
+  selfReady = false;
+  myPower = null;
+  roster = data.roster || [];
+  roster.forEach(pl => playerInfo.set(pl.id, { name: pl.name, color: pl.color }));
+  roundEndsAt = data.endsAt;
+  revealedPowers.clear(); renderPowerLog();
+
+  showScreen('game');
+  $('btnEndGame').classList.toggle('hidden', !isHost);
+  $('banner').classList.add('hidden');
+  $('eliminatedList').classList.add('hidden');
+  $('orderPanel').classList.add('hidden');
+  $('cardLog').classList.add('hidden');
+  $('choiceOverlay').classList.add('hidden');
+  clearInterval(orderShuffleTimer);
+
+  camera.position.set(0, data.islandSize * 0.7 + 7, data.islandSize * 0.6 + 7);
+  camera.lookAt(0, 0, 0);
+  $('instructions').textContent = '⚡ เลือกพลังแฝง 1 อย่าง (ใช้ตลอดทั้งเกม)';
+});
+
+socket.on('yourPowers', data => {
+  if (phase !== 'powerpick') return;
+  buildPowerOverlay(data.choices || []);
+});
+
+socket.on('powerPicked', data => { myPower = data.power; });
+
+function buildPowerOverlay(choices) {
+  $('choiceTitle').textContent = '⚡ เลือกพลังแฝง 1 อย่าง';
+  const el = $('choiceCards');
+  el.innerHTML = '';
+  choices.forEach(pid => {
+    const full = POWER_DESC[pid] || pid;
+    const name = full.split(' — ')[0];
+    const desc = full.replace(/^[^—]*—\s*/, '');
+    const div = document.createElement('div');
+    div.className = 'choiceCard';
+    div.innerHTML = `<div class="ccEmoji">${POWER_EMOJI[pid] || '⚡'}</div>
+      <div class="ccName">${name}</div>
+      <div class="ccDesc">${desc}</div>`;
+    div.addEventListener('click', () => {
+      if (phase !== 'powerpick') return;
+      myPower = pid;
+      socket.emit('pickPower', { power: pid });
+      [...el.children].forEach(ch => ch.classList.remove('chosen'));
+      div.classList.add('chosen');
+    });
+    el.appendChild(div);
+  });
+  $('choiceOverlay').classList.remove('hidden');
+}
 
 // Phase 1: choose 1 of 3 dealt cards
 socket.on('roundStart', data => {
@@ -1671,6 +1806,7 @@ socket.on('yourChoices', data => {
 socket.on('cardPicked', data => { myCard = data.card; });
 
 function buildChoiceOverlay(choices) {
+  $('choiceTitle').textContent = '🃏 เลือกการ์ด 1 ใบ';
   const el = $('choiceCards');
   el.innerHTML = '';
   choices.forEach(cid => {
@@ -2171,7 +2307,7 @@ const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, clock.getDelta());
-  if (phase === 'cardpick') {
+  if (phase === 'cardpick' || phase === 'powerpick') {
     const secs = Math.ceil(Math.max(0, roundEndsAt - Date.now()) / 1000);
     const tEl = $('timerValue');
     tEl.textContent = secs;
@@ -2193,6 +2329,11 @@ function animate() {
     if (previewModel) previewModel.rotation.y += dt * 0.8;
     if (previewMixer) previewMixer.update(dt);
     previewRenderer.render(previewScene, previewCamera);
+  }
+  if (!gameOverPanel.classList.contains('hidden')) {
+    if (winnerModel) winnerModel.rotation.y += dt * 0.7;
+    if (winnerMixer) winnerMixer.update(dt);
+    winnerRenderer.render(winnerScene, winnerCamera);
   }
 }
 animate();

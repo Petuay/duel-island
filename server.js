@@ -11,6 +11,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: res => res.setHeader('Cache-Control', 'no-cache')
 }));
 
+const POWER_PICK_DURATION = 12000; // ms to choose 1 of 3 latent powers (once, at match start)
 const CARD_PICK_DURATION = 10000; // ms to choose 1 of 3 dealt cards
 const PLACE_DURATION = 20000; // ms to walk, aim & aim the chosen card
 const NEXT_ROUND_DELAY = 3000; // pause after reveal before next round starts
@@ -83,8 +84,17 @@ function inwardAngle(x, z) {
   return Math.atan2(-x, -z) + (Math.random() - 0.5) * Math.PI;
 }
 
-// ---- Hidden latent powers (one per player, fixed for the whole match) ----
+// ---- Latent powers (each player picks one at match start, fixed for the match) ----
 const POWER_IDS = ['matrix', 'drunken', 'revenger', 'man'];
+// deal 3 distinct powers to choose from
+function dealPowerChoices() {
+  const pool = POWER_IDS.slice();
+  const out = [];
+  for (let i = 0; i < 3 && pool.length; i++) {
+    out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  }
+  return out;
+}
 // is a bullet travelling at `bulletAng` striking a player facing `faceAng` from behind?
 function hitFromBehind(bulletAng, faceAng) {
   return Math.sin(bulletAng) * Math.sin(faceAng) + Math.cos(bulletAng) * Math.cos(faceAng) > 0.15;
@@ -282,11 +292,60 @@ class Room {
     for (const p of this.players.values()) {
       p.alive = true;
       this.leaveSpectators(p.id);
-      // each player secretly gets one hidden latent power for the whole match
-      p.power = POWER_IDS[Math.floor(Math.random() * POWER_IDS.length)];
       p.matrixUsed = false; // The Matrix dodge is a once-per-match trigger
+      p.kills = 0;          // eliminations caused this match (for the final scoreboard)
+      p.eliminatedRound = null; // round they died (null = still alive / winner)
+      // each player picks one latent power from 3 dealt choices (bots auto-pick)
+      p.power = null;
+      p.powerChoices = dealPowerChoices();
+      if (p.isBot) p.power = p.powerChoices[Math.floor(Math.random() * p.powerChoices.length)];
     }
     this.islandSize = computeIslandSize(this.players.size);
+    this.startPowerPick();
+  }
+
+  // Match start: each player chooses 1 of 3 latent powers before the first round.
+  startPowerPick() {
+    this.state = 'powerpick';
+    this.roundEndsAt = Date.now() + POWER_PICK_DURATION;
+    const roster = [...this.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color }));
+    io.to(this.code).emit('powerPickStart', {
+      duration: POWER_PICK_DURATION,
+      endsAt: this.roundEndsAt,
+      islandSize: this.islandSize,
+      roster
+    });
+    for (const p of this.players.values()) {
+      if (!p.isBot) io.to(p.id).emit('yourPowers', { choices: p.powerChoices });
+    }
+    clearTimeout(this.timer);
+    this.maybeBeginRounds();
+    if (this.state === 'powerpick') this.timer = setTimeout(() => this.beginRounds(), POWER_PICK_DURATION);
+  }
+
+  pickPower(id, power) {
+    if (this.state !== 'powerpick') return;
+    const p = this.players.get(id);
+    if (!p || !p.powerChoices || !p.powerChoices.includes(power)) return;
+    p.power = power;
+    io.to(id).emit('powerPicked', { power });
+    this.maybeBeginRounds();
+  }
+
+  maybeBeginRounds() {
+    const all = [...this.players.values()];
+    if (all.length > 0 && all.every(p => p.power)) {
+      clearTimeout(this.timer);
+      this.beginRounds();
+    }
+  }
+
+  beginRounds() {
+    if (this.state !== 'powerpick') return;
+    // auto-assign a random power to anyone who never chose
+    for (const p of this.players.values()) {
+      if (!p.power) p.power = p.powerChoices[Math.floor(Math.random() * p.powerChoices.length)];
+    }
     this.startRound();
   }
 
@@ -608,10 +667,17 @@ class Room {
       });
     }
 
+    // tally eliminations to each shooter for the final scoreboard
+    for (const s of shots) {
+      const shooter = this.players.get(s.shooterId);
+      if (shooter && s.hitIds) shooter.kills += s.hitIds.length;
+    }
+
     const eliminated = [];
     for (const p of alive) {
       if (!stillAlive.has(p.id)) {
         p.alive = false;
+        p.eliminatedRound = this.round;
         eliminated.push(p.id);
         if (!p.isBot) this.joinSpectators(p.id);
       }
@@ -649,14 +715,31 @@ class Room {
       this.state = 'ended';
       const winner = survivors[0] ? this.players.get(survivors[0]) : null;
       io.to(this.code).emit('gameOver', {
-        winnerId: winner ? winner.id : null,
-        winnerName: winner ? winner.name : null
+        winner: winner ? { id: winner.id, name: winner.name, char: winner.char, color: winner.color } : null,
+        standings: this.buildStandings(winner)
       });
       return;
     }
     this.islandSize = Math.max(MIN_ISLAND_SIZE, Math.round(this.islandSize * SHRINK_FACTOR));
     this.timer = setTimeout(() => this.startRound(), NEXT_ROUND_DELAY);
     io.to(this.code).emit('nextRoundCountdown', { delay: NEXT_ROUND_DELAY, islandSize: this.islandSize });
+  }
+
+  // final scoreboard: winner first, then latest-eliminated first (rank by survival),
+  // ties broken by kills. Each row carries what the end screen renders.
+  buildStandings(winner) {
+    const survivalRank = p => (p === winner ? Infinity : (p.eliminatedRound || 0));
+    const ranked = [...this.players.values()].sort((a, b) => {
+      const d = survivalRank(b) - survivalRank(a);
+      return d !== 0 ? d : (b.kills || 0) - (a.kills || 0);
+    });
+    return ranked.map((p, i) => ({
+      rank: i + 1,
+      id: p.id, name: p.name, char: p.char, color: p.color, isBot: !!p.isBot,
+      kills: p.kills || 0,
+      roundReached: p === winner ? this.round : (p.eliminatedRound || this.round),
+      isWinner: p === winner
+    }));
   }
 
   resetToLobby() {
@@ -753,6 +836,12 @@ io.on('connection', socket => {
     const room = rooms.get(currentRoomCode);
     if (!room) return;
     room.setReady(socket.id);
+  });
+
+  socket.on('pickPower', ({ power }) => {
+    const room = rooms.get(currentRoomCode);
+    if (!room) return;
+    room.pickPower(socket.id, power);
   });
 
   socket.on('pickCard', ({ card }) => {

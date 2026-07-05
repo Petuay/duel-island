@@ -363,3 +363,38 @@ button.secondary:active { box-shadow: 0 2px 0 #d9902a; }
 
 #gameOverPanel { z-index: 20; }
 #gameOverPanel .panel h1 { color: #ff9f43; }
+.gameOverWide { min-width: 560px; max-width: 720px; }
+.gameOverBody {
+  display: flex; gap: 18px; margin: 8px 0 18px; text-align: left; align-items: stretch;
+}
+.winnerBox {
+  width: 200px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 8px; padding: 10px;
+  background: linear-gradient(160deg, #fff6e2, #ffe6c2); border: 2px solid #ffd79a;
+  border-radius: 18px; box-shadow: inset 0 0 24px rgba(255,180,80,0.25);
+}
+#winnerCanvas { width: 100%; aspect-ratio: 1 / 1; display: block; }
+.winnerName {
+  font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 18px; color: #e07b1f;
+  text-align: center; word-break: break-word;
+}
+.standingsBox {
+  flex: 1; min-width: 0; background: #f2f8fe; border: 2px solid #dcebf7;
+  border-radius: 18px; padding: 12px 14px; overflow: auto; max-height: 320px;
+}
+.standingsTitle {
+  font-family: 'Baloo 2', sans-serif; font-weight: 800; font-size: 15px; color: #2f6fb0;
+  margin-bottom: 8px;
+}
+.standingsTable { width: 100%; border-collapse: collapse; font-size: 14px; }
+.standingsTable th {
+  color: #6d84a8; font-weight: 600; font-size: 12px; text-align: left;
+  padding: 4px 6px; border-bottom: 2px solid #dcebf7;
+}
+.standingsTable td { padding: 6px 6px; border-bottom: 1px solid #e8f0f8; color: #2b3a55; }
+.standingsTable .stName { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+.standingsTable .stRank { font-size: 16px; width: 34px; }
+.standingsTable .stRound, .standingsTable .stKills { text-align: center; width: 64px; }
+.standingsWinner { background: #fff3dc; }
+.standingsWinner td { color: #d9781a; font-weight: 800; }
+.gameOverWait { color: #6d84a8; font-size: 13px; margin-top: 4px; }
