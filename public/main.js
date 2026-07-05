@@ -61,17 +61,13 @@ function addBorderFrame(group, size) {
   group.add(frame);
 }
 
-// ---------- 3D corner decorations (individual crystal shards + trees) ----------
-// The source assets were each a fused cluster of several separate objects
-// (4 crystal shards / 5 trees baked into one mesh); they were split offline
-// into standalone crystal0-3.glb / tree0-4.glb so each can be placed on its own.
+// ---------- 3D corner decorations (individual crystal shards) ----------
+// The source asset was a fused cluster of 4 separate crystal shards baked into
+// one mesh; it was split offline into standalone crystal0-3.glb so each can be
+// placed on its own (tree props were tried and removed — model wasn't liked).
 const CRYSTAL_COUNT = 4;
-const TREE_COUNT = 5;
 const crystalTemplates = [];
-const treeTemplates = [];
-// kept modest so decor never reads as more prominent than the player models (MODEL_HEIGHT above)
-const CRYSTAL_MODEL_HEIGHT = 0.5;
-const TREE_MODEL_HEIGHT = 0.95;
+const CRYSTAL_MODEL_HEIGHT = 1.0;
 (() => {
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   for (let i = 0; i < CRYSTAL_COUNT; i++) {
@@ -79,12 +75,6 @@ const TREE_MODEL_HEIGHT = 0.95;
       gltf => { crystalTemplates[i] = gltf.scene; addCornerDecor(currentIslandSize); },
       undefined,
       err => console.warn('[crystal] load failed:', i, err));
-  }
-  for (let i = 0; i < TREE_COUNT; i++) {
-    loader.load(`models/tree${i}.glb`,
-      gltf => { treeTemplates[i] = gltf.scene; addCornerDecor(currentIslandSize); },
-      undefined,
-      err => console.warn('[tree] load failed:', i, err));
   }
 })();
 function placeGlbProp(template, group, x, z, targetHeight, rotY = 0) {
@@ -103,23 +93,13 @@ function placeGlbProp(template, group, x, z, targetHeight, rotY = 0) {
 // a dedicated group so re-running addCornerDecor (island resize, or a prop template
 // arriving late) clears and rebuilds instead of piling up duplicate instances
 const cornerDecorGroup = new THREE.Group();
-// one crystal shard per corner (inset from the border), trees scattered sparsely along the 4 edges
+// one crystal shard per corner, inset from the border frame
 function addCornerDecor(size) {
   while (cornerDecorGroup.children.length) cornerDecorGroup.remove(cornerDecorGroup.children[0]);
   const half = size / 2;
   const corners = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
   corners.forEach(([sx, sz], i) => {
-    placeGlbProp(crystalTemplates[i], cornerDecorGroup, sx * half * 0.72, sz * half * 0.72, CRYSTAL_MODEL_HEIGHT, i * 0.9);
-  });
-  const treeSlots = [
-    [-0.55, -0.85], [0.55, -0.85], // top edge
-    [-0.55, 0.85], [0.55, 0.85],   // bottom edge
-    [-0.85, -0.5], [-0.85, 0.5],   // left edge
-    [0.85, -0.5], [0.85, 0.5]      // right edge
-  ];
-  treeSlots.forEach(([fx, fz], i) => {
-    const h = TREE_MODEL_HEIGHT * (0.85 + (i % 3) * 0.12);
-    placeGlbProp(treeTemplates[i % TREE_COUNT], cornerDecorGroup, fx * half, fz * half, h, i * 1.3);
+    placeGlbProp(crystalTemplates[i], cornerDecorGroup, sx * half * 0.6, sz * half * 0.6, CRYSTAL_MODEL_HEIGHT, i * 0.9);
   });
 }
 
