@@ -61,6 +61,46 @@ function addBorderFrame(group, size) {
   group.add(frame);
 }
 
+// ---------- 3D corner decorations (crystal formation + tree) ----------
+let crystalTemplate = null;
+let treeModelTemplate = null;
+const CRYSTAL_MODEL_HEIGHT = 1.0; // world height each corner crystal is scaled to
+const TREE_MODEL_HEIGHT = 2.0;    // world height each corner tree is scaled to
+(() => {
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  loader.load('models/crystal.glb',
+    gltf => { crystalTemplate = gltf.scene; addCornerDecor(islandGroup, currentIslandSize); },
+    undefined,
+    err => console.warn('[crystal] load failed:', err));
+  loader.load('models/tree.glb',
+    gltf => { treeModelTemplate = gltf.scene; addCornerDecor(islandGroup, currentIslandSize); },
+    undefined,
+    err => console.warn('[tree] load failed:', err));
+})();
+function placeGlbProp(template, group, x, z, targetHeight, rotY = 0) {
+  if (!template) return;
+  const model = skeletonClone(template);
+  model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3(), center = new THREE.Vector3();
+  box.getSize(size); box.getCenter(center);
+  const s = targetHeight / (size.y || 1);
+  model.scale.setScalar(s);
+  model.position.set(x - center.x * s, -box.min.y * s, z - center.z * s);
+  model.rotation.y = rotY;
+  group.add(model);
+}
+// one crystal + one tree tucked into each of the 4 corners, inset from the border frame
+function addCornerDecor(group, size) {
+  if (!crystalTemplate && !treeModelTemplate) return;
+  const half = size / 2;
+  const corners = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+  corners.forEach(([sx, sz], i) => {
+    placeGlbProp(crystalTemplate, group, sx * half * 0.72, sz * half * 0.72, CRYSTAL_MODEL_HEIGHT, i * 0.9);
+    placeGlbProp(treeModelTemplate, group, sx * half * 0.6, sz * half * 0.86, TREE_MODEL_HEIGHT, -i * 0.7);
+  });
+}
+
 function clipByName(tpl, name) {
   return tpl && tpl.animations ? (tpl.animations.find(a => a.name === name) || null) : null;
 }
@@ -784,6 +824,7 @@ function buildIsland(size) {
   islandGroup.add(base);
 
   addBorderFrame(islandGroup, n);
+  addCornerDecor(islandGroup, n);
 
   scene.add(islandGroup);
   return n;
