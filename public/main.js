@@ -77,7 +77,7 @@ const CRYSTAL_MODEL_HEIGHT = 1.0;
       err => console.warn('[crystal] load failed:', i, err));
   }
 })();
-function placeGlbProp(template, group, x, z, targetHeight, rotY = 0) {
+function placeGlbProp(template, group, x, z, targetHeight, rotY = 0, sinkY = 0) {
   if (!template) return;
   const model = skeletonClone(template);
   model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
@@ -86,7 +86,7 @@ function placeGlbProp(template, group, x, z, targetHeight, rotY = 0) {
   box.getSize(size); box.getCenter(center);
   const s = targetHeight / (size.y || 1);
   model.scale.setScalar(s);
-  model.position.set(x - center.x * s, -box.min.y * s, z - center.z * s);
+  model.position.set(x - center.x * s, -box.min.y * s - sinkY, z - center.z * s);
   model.rotation.y = rotY;
   group.add(model);
 }
@@ -150,7 +150,8 @@ let myCard = null;      // the card I was dealt this round
 const SHOT_START_DELAY = 4200;
 const SHOT_INTERVAL = 1300;
 const POWER_PAUSE = 1900; // extra gap after a shot that triggers a power/mirror zoom
-const BULLET_SPEED = 16; // units/sec — medium travel speed for the bullet ball
+const BULLET_SPEED = 12; // units/sec — medium travel speed for the bullet ball
+const REVENGE_RISE_MS = 600; // จิตพยาบาท: corpse stands back up before firing its death-shots
 // does this shot pull the camera in on a power/mirror? (must match server shotHasZoom)
 function shotHasZoom(s) {
   return !!(s.drunken || s.revenge || (s.dodges && s.dodges.length) ||
@@ -347,7 +348,7 @@ socket.on('roomList', ({ rooms }) => { openRoomsCache = rooms; renderOpenRooms()
 
 // ---------- Reference guide (collapsible list of all cards + powers) ----------
 function buildGuide() {
-  const powerOrder = ['matrix', 'drunken', 'revenger', 'man'];
+  const powerOrder = ['matrix', 'drunken', 'revenger', 'man', 'clairvoyant', 'collector'];
   let html = '<div class="guideHead">🃏 การ์ดพลัง (สุ่มแจกเลือก 1 จาก 3 ทุกรอบ)</div>';
   CARDS.forEach(c => {
     html += `<div class="guideItem"><span class="gEmoji">${c.emoji}</span>
@@ -1271,12 +1272,14 @@ function getBloodTexture() {
 let fxSprites = [], fxBeams = [], fxParticles = [], revealDecals = [], fxBullets = [], fxLabels = [];
 
 // hidden-power icons + a short label that floats up above a player when a power fires
-const POWER_EMOJI = { matrix: '🕶️', drunken: '🥴', revenger: '👻', man: '💪' };
+const POWER_EMOJI = { matrix: '🕶️', drunken: '🥴', revenger: '👻', man: '💪', clairvoyant: '👁️', collector: '🎒' };
 const POWER_DESC = {
   matrix: 'The Matrix — หลบกระสุนนัดแรกของเกม กระสุนทะลุไปโดนคนข้างหลัง',
-  drunken: 'เมาดิบ — 33% ยิงออกด้านหลังแทน',
+  drunken: 'เมาดิบ — 25% ยิงออกเป็นลูกซองแฉก 4 นัดแทน',
   revenger: 'จิตพยาบาท — ตายแล้วยิงสุ่ม 3 นัด',
-  man: 'แผ่นหลังลูกผู้ชาย — โดนยิงด้านหลังกระเด็นสุ่มทิศ'
+  man: 'แผ่นหลังลูกผู้ชาย — โดนยิงด้านหลังสะท้อนกลับตามมุมตกกระทบ',
+  clairvoyant: 'เนตรทิพย์ — ตอนเตรียมตัว เห็นรอยเท้าคู่ต่อสู้สุ่ม 1 คน (มีรอยเท้าหลอกอีก 2 รอย)',
+  collector: 'นักสะสม — เก็บการ์ดที่เลือกไว้ใช้ตาถัดไปได้ 1 ใบ'
 };
 // card ids and short blurbs for the in-game reference sheet
 const CARD_NAMES = CARDS; // reuse; each has {id,emoji,name,desc}
@@ -1473,11 +1476,8 @@ function areaBox(type, x, z, extra = {}) {
 function makeObstacleMesh(o, ghost) {
   const g = new THREE.Group();
   if (o.type === 'wall') {
-    // a small row of 3 trees along the rectangle's long (local X) axis, echoing the 1x3 hitbox
-    const spacing = 1.0, cos = Math.cos(o.rot), sin = Math.sin(o.rot);
-    for (let i = -1; i <= 1; i++) {
-      placeGlbProp(treeCardTemplates[i + 1], g, i * spacing * cos, i * spacing * sin, 1.1, o.rot);
-    }
+    // a single tree at the obstacle's centre, sunk into the ground so only the canopy shows
+    placeGlbProp(treeCardTemplates[0], g, 0, 0, 1.4, o.rot, 0.35);
   } else if (o.type === 'firework') {
     placeGlbProp(volcanoTemplate, g, 0, 0, 1.3);
   } else if (o.type === 'thunder') {
@@ -1764,7 +1764,8 @@ window.addEventListener('mousemove', e => {
 // click on the field to place an area card. ไซโคลน is 2-phase: the first click locks the
 // storm's origin, every click after that instead re-aims its travel direction.
 canvas.addEventListener('click', e => {
-  if (!placing || selfReady || spectating || !isAreaCard(myCard)) return;
+  const pCard = placementCard();
+  if (!placing || selfReady || spectating || !isAreaCard(pCard)) return;
   const ndc = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
   const hit = new THREE.Vector3();
@@ -1773,7 +1774,7 @@ canvas.addEventListener('click', e => {
   const x = Math.max(-lim, Math.min(lim, hit.x));
   const z = Math.max(-lim, Math.min(lim, hit.z));
 
-  if (myCard === 'cyclone' && myCardArea) {
+  if (pCard === 'cyclone' && myCardArea) {
     myCycloneAngle = Math.atan2(x - myCardArea.x, z - myCardArea.z);
     socket.emit('useCardArea', { x, z });
     updateCycloneGhost();
@@ -1782,25 +1783,27 @@ canvas.addEventListener('click', e => {
   }
   myCardArea = { x, z };
   socket.emit('useCardArea', { x, z });
-  if (myCard === 'cyclone') updateCycloneGhost();
-  else placeAreaMarker(myCard, x, z, myCard === 'wall' ? { rot: myWallRot } : undefined);
+  if (pCard === 'cyclone') updateCycloneGhost();
+  else placeAreaMarker(pCard, x, z, pCard === 'wall' ? { rot: myWallRot } : undefined);
   updateCardHeader();
 });
 
 // right-click cycles ต้นไม้ให้ร่ม's rotation 45deg while it's being placed
 canvas.addEventListener('contextmenu', e => {
-  if (!placing || selfReady || spectating || myCard !== 'wall') return;
+  if (!placing || selfReady || spectating || placementCard() !== 'wall') return;
   e.preventDefault();
   if (!myCardArea) return;
   myWallRot = (myWallRot + Math.PI / 4) % (Math.PI * 2);
   socket.emit('rotateCardArea');
-  placeAreaMarker(myCard, myCardArea.x, myCardArea.z, { rot: myWallRot });
+  placeAreaMarker('wall', myCardArea.x, myCardArea.z, { rot: myWallRot });
 });
 
 let selfColor = '#3498db';
 let placing = false;
 let phase = 'placing'; // 'powerpick' (choose latent power, once) | 'cardpick' (1 of 3) | 'placing'
 let myPower = null;
+let myBankedCard = null; // นักสะสม: a card carried over from a previous round, if any
+let myCardBankedThisRound = false; // นักสะสม: this round's own pick was banked instead of used
 
 // Match start (once): choose 1 of 3 latent powers before the first round.
 socket.on('powerPickStart', data => {
@@ -1816,6 +1819,8 @@ socket.on('powerPickStart', data => {
   spectating = false;
   selfReady = false;
   myPower = null;
+  myBankedCard = null;
+  clearEyeTrail();
   roster = data.roster || [];
   roster.forEach(pl => playerInfo.set(pl.id, { name: pl.name, color: pl.color }));
   roundEndsAt = data.endsAt;
@@ -1890,11 +1895,13 @@ socket.on('roundStart', data => {
   myCardArea = null;
   myCycloneAngle = null;
   myWallRot = 0;
+  myCardBankedThisRound = false;
   myFrozenZone = null;
   updateFrozenZoneMarker();
   clearAreaMarker();
   clearCycloneGhost();
   clearObstacles();
+  clearEyeTrail();
   roster = data.roster || [];
   roster.forEach(pl => playerInfo.set(pl.id, { name: pl.name, color: pl.color }));
   roundEndsAt = data.endsAt;
@@ -1922,13 +1929,29 @@ socket.on('roundStart', data => {
 
 socket.on('yourChoices', data => {
   if (spectating || phase !== 'cardpick') return;
+  myBankedCard = data.bankedCard || null;
   buildChoiceOverlay(data.choices || []);
 });
 
-socket.on('cardPicked', data => { myCard = data.card; });
+socket.on('cardPicked', data => { myCard = data.card; updateBankButton(); });
+socket.on('cardBanked', () => { updateBankButton(true); });
+
+function updateBankButton(bankedNow) {
+  const btn = $('bankCardBtn');
+  if (bankedNow) {
+    btn.textContent = '✅ เก็บไว้แล้ว ตานี้จะไม่ใช้การ์ด';
+    btn.disabled = true;
+    return;
+  }
+  const canBank = myPower === 'collector' && !myBankedCard && !!myCard;
+  btn.classList.toggle('hidden', !canBank);
+  btn.disabled = false;
+  btn.textContent = '🎒 เก็บการ์ดนี้ไว้ใช้ตาหน้า';
+}
 
 function buildChoiceOverlay(choices) {
-  $('choiceTitle').textContent = '🃏 เลือกการ์ด 1 ใบ';
+  $('choiceTitle').textContent = '🃏 เลือกการ์ด 1 ใบ'
+    + (myBankedCard ? ` (มี ${cardById(myBankedCard)?.emoji || ''} เก็บไว้จากตาก่อนด้วย)` : '');
   const el = $('choiceCards');
   el.innerHTML = '';
   choices.forEach(cid => {
@@ -1945,11 +1968,18 @@ function buildChoiceOverlay(choices) {
       socket.emit('pickCard', { card: cid });
       [...el.children].forEach(ch => ch.classList.remove('chosen'));
       div.classList.add('chosen');
+      updateBankButton();
     });
     el.appendChild(div);
   });
+  updateBankButton();
   $('choiceOverlay').classList.remove('hidden');
 }
+
+$('bankCardBtn').addEventListener('click', () => {
+  if (phase !== 'cardpick' || !myCard || myBankedCard) return;
+  socket.emit('bankCard');
+});
 
 // Phase 2: with the chosen card, walk / aim / aim the card
 socket.on('placeStart', data => {
@@ -1970,7 +2000,8 @@ socket.on('placeStart', data => {
     spectateCamTarget.set(0, data.islandSize * 0.85 + 6, data.islandSize * 0.6 + 4);
     $('instructions').textContent = '👻 คุณตกรอบแล้ว กำลังดูผู้เล่นที่เหลือหาที่กำบัง...';
   } else {
-    $('instructions').textContent = 'WASD เดิน • เมาส์เล็งทิศ • ใช้การ์ดด้านขวา • SPACE ยืนยัน';
+    $('instructions').textContent = 'WASD เดิน • เมาส์เล็งทิศ • ใช้การ์ดด้านขวา • SPACE ยืนยัน'
+      + (myPower === 'clairvoyant' ? ' • 👁️ จับตาดูรอยเท้า' : '');
     selfPos.set((Math.random() - 0.5) * 1, 0, (Math.random() - 0.5) * 1);
     selfAngle = Math.random() * Math.PI * 2;
     selfMesh = makePlayerMesh(selfColor, true, selfChar);
@@ -1985,11 +2016,21 @@ socket.on('placeStart', data => {
 
 socket.on('yourCard', data => {
   myCard = data.card;
+  myBankedCard = data.bankedCard || null;
+  myCardBankedThisRound = !!data.cardBanked;
   myFrozenZone = data.frozenZone || null;
   updateFrozenZoneMarker();
   // rebuild the picker now that we know the card (self-buff note vs. area-placement UI)
   if (placing && !spectating) buildCardPicker();
 });
+
+// นักสะสม: whichever active card is the area type drives the placement UI/click handling —
+// dealing already guarantees at most one of {myCard, myBankedCard} is ever an area card.
+// If this round's own pick was banked, nothing is actually in play this round at all.
+function placementCard() {
+  if (myCardBankedThisRound) return null;
+  return (myBankedCard && isAreaCard(myBankedCard)) ? myBankedCard : myCard;
+}
 
 // กรงหิมะ: a persistent ground marker showing my own movement clamp this round, if frozen
 let frozenZoneMarker = null;
@@ -2009,6 +2050,49 @@ function updateFrozenZoneMarker() {
   scene.add(g);
   frozenZoneMarker = g;
 }
+
+// ---------- เนตรทิพย์ (clairvoyant) footprint trail ----------
+// server only ever tells us an anonymous {x,z} — 2 decoys move in lockstep with the real one so
+// which of the 3 trails is the actual target is never revealed, just their pattern of movement
+let eyeReal = null;
+let eyeDecoys = [];
+let eyeLastDrop = [null, null, null];
+let eyeDecals = [];
+const EYE_DROP_DIST = 0.45;
+
+function clearEyeTrail() {
+  eyeDecals.forEach(d => scene.remove(d));
+  eyeDecals = [];
+  eyeReal = null;
+  eyeDecoys = [];
+  eyeLastDrop = [null, null, null];
+}
+
+function dropEyeFootprint(i, x, z) {
+  const last = eyeLastDrop[i];
+  if (last && Math.hypot(x - last.x, z - last.z) < EYE_DROP_DIST) return;
+  eyeLastDrop[i] = { x, z };
+  const decal = new THREE.Mesh(new THREE.CircleGeometry(0.16, 12),
+    new THREE.MeshBasicMaterial({ color: 0xd8d8d8, transparent: true, opacity: 0.55, depthWrite: false }));
+  decal.rotation.x = -Math.PI / 2;
+  decal.position.set(x, 0.02, z);
+  scene.add(decal);
+  eyeDecals.push(decal);
+}
+
+socket.on('eyeFootprint', data => {
+  if (!eyeReal) {
+    eyeReal = { x: data.x, z: data.z };
+    const b = bounds || 8;
+    eyeDecoys = [0, 1].map(() => ({ x: (Math.random() * 2 - 1) * b * 0.7, z: (Math.random() * 2 - 1) * b * 0.7 }));
+  } else {
+    const dx = data.x - eyeReal.x, dz = data.z - eyeReal.z;
+    eyeReal = { x: data.x, z: data.z };
+    eyeDecoys = eyeDecoys.map(d => ({ x: d.x + dx, z: d.z + dz }));
+  }
+  dropEyeFootprint(0, eyeReal.x, eyeReal.z);
+  eyeDecoys.forEach((d, i) => dropEyeFootprint(i + 1, d.x, d.z));
+});
 
 // track color for self via roomUpdate
 socket.on('roomUpdate', data => {
@@ -2110,23 +2194,35 @@ function clearRevealMeshes() {
 // Area cards are placed by clicking the field (some with extra interactions, noted per-card).
 function updateCardHeader() {
   const el = $('cardHeader');
-  const c = cardById(myCard);
+  if (myCardBankedThisRound) {
+    el.classList.remove('hidden');
+    el.innerHTML = `<div class="cardEmoji">🎒</div>
+      <div class="cardName">เก็บการ์ดไว้แล้ว</div>
+      <div class="cardDesc">${cardById(myCard)?.name || ''} จะไม่มีผลตานี้ รอใช้ตาหน้า</div>`;
+    return;
+  }
+  const pCard = placementCard();
+  const c = cardById(pCard);
   if (!c) { el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
   let hint = '✨ ใช้กับตัวเองทันที ไม่ต้องเลือกเป้า';
-  if (isAreaCard(myCard)) {
-    if (myCard === 'cyclone') {
+  if (isAreaCard(pCard)) {
+    if (pCard === 'cyclone') {
       hint = !myCardArea ? 'คลิกซ้ายวางจุดเริ่มพายุ'
         : (myCycloneAngle != null ? '✅ ตั้งทิศแล้ว คลิกซ้ำเพื่อเปลี่ยนทิศ' : 'คลิกซ้ำเพื่อกำหนดทิศทาง');
     } else {
       hint = myCardArea ? '✅ วางแล้ว! คลิกที่อื่นเพื่อย้าย' : 'คลิกบนสนามเพื่อวางการ์ด • ไม่วาง = สุ่มจุดให้';
-      if (myCard === 'wall') hint += ' • คลิกขวาหมุน 45°';
+      if (pCard === 'wall') hint += ' • คลิกขวาหมุน 45°';
     }
   }
+  // นักสะสม: whichever card carried over from a previous round also just quietly applies
+  const bankedNote = myBankedCard
+    ? `<div class="cardHint">🎒 ${cardById(myBankedCard)?.emoji || ''} ${cardById(myBankedCard)?.name || ''} ก็ทำงานด้วยตานี้</div>`
+    : '';
   el.innerHTML = `<div class="cardEmoji">${c.emoji}</div>
     <div class="cardName">${c.name}</div>
     <div class="cardDesc">${c.desc}</div>
-    <div class="cardHint">${hint}</div>`;
+    <div class="cardHint">${hint}</div>${bankedNote}`;
 }
 
 function buildCardPicker() {
@@ -2138,7 +2234,9 @@ function buildCardPicker() {
   const note = document.createElement('li');
   note.className = 'orderRow';
   note.style.justifyContent = 'center';
-  note.innerHTML = `<span class="orderName" style="text-align:center">${isAreaCard(myCard) ? '🖱️ คลิกบนสนามเพื่อวางการ์ด' : '✨ ใช้กับตัวเองอัตโนมัติ'}</span>`;
+  const noteText = myCardBankedThisRound ? '🎒 เก็บการ์ดไว้แล้ว ไม่ต้องทำอะไร'
+    : (isAreaCard(placementCard()) ? '🖱️ คลิกบนสนามเพื่อวางการ์ด' : '✨ ใช้กับตัวเองอัตโนมัติ');
+  note.innerHTML = `<span class="orderName" style="text-align:center">${noteText}</span>`;
   listEl.appendChild(note);
   $('orderPanel').classList.remove('hidden');
   showCardInstructionBanner();
@@ -2157,8 +2255,9 @@ function showCardInstructionBanner() {
   clearTimeout(cardInstructionTimer);
   const el = $('cardInstructionBanner');
   if (!el) return;
-  if (!isAreaCard(myCard)) { el.classList.add('hidden'); return; }
-  el.textContent = CARD_INSTRUCTIONS[myCard] || 'คลิกซ้ายเพื่อวางการ์ดบนสนาม';
+  const pCard = placementCard();
+  if (!isAreaCard(pCard)) { el.classList.add('hidden'); return; }
+  el.textContent = CARD_INSTRUCTIONS[pCard] || 'คลิกซ้ายเพื่อวางการ์ดบนสนาม';
   el.classList.remove('hidden');
   cardInstructionTimer = setTimeout(() => el.classList.add('hidden'), 4500);
 }
@@ -2426,7 +2525,11 @@ function updateReveal(dt) {
   }
 
   revealMeshes.forEach(entry => {
-    if (entry.dying) {
+    if (entry.risingUntil && revealClock < entry.risingUntil) {
+      // จิตพยาบาท: the corpse stands back up briefly before firing its death-shots
+      entry.mesh.rotation.z = THREE.MathUtils.lerp(entry.mesh.rotation.z, 0, dt * 5);
+      entry.mesh.position.y = THREE.MathUtils.lerp(entry.mesh.position.y, 0, dt * 5);
+    } else if (entry.dying) {
       entry.mesh.rotation.z = THREE.MathUtils.lerp(entry.mesh.rotation.z, Math.PI / 2, dt * 4);
       entry.mesh.position.y = THREE.MathUtils.lerp(entry.mesh.position.y, -0.4 * entry.size, dt * 4);
     } else if (entry.dodgeUntil && revealClock < entry.dodgeUntil) {
@@ -2452,7 +2555,12 @@ function handlePowerEvents(s) {
   }
   if (s.revenge) {
     const e = revealMeshMap.get(s.shooterId);
-    if (e) { focusOn(e, 2600); floatLabel(e.x, e.z, 2.3, POWER_EMOJI.revenger + ' จิตพยาบาท!', '#c9b3ff'); revealPower(s.shooterId, 'revenger'); }
+    if (e) {
+      focusOn(e, 2600);
+      e.risingUntil = revealClock + REVENGE_RISE_MS; // stand the corpse back up before it fires
+      floatLabel(e.x, e.z, 2.3, POWER_EMOJI.revenger + ' จิตพยาบาท!', '#c9b3ff');
+      revealPower(s.shooterId, 'revenger');
+    }
   }
   (s.dodges || []).forEach(id => {
     const e = revealMeshMap.get(id);
@@ -2507,9 +2615,14 @@ function triggerShot(s) {
   }
 
   // normal / forked / bouncing bullets
-  spawnMuzzleFlash(shooterEntry);
-  const bulletR = 0.12 * Math.min(2.2, Math.max(0.6, shooterEntry.size));
-  (s.bullets || []).forEach(b => spawnSegmentBullet(shooterEntry.color, b.segments, bulletR));
+  const fireNow = () => {
+    spawnMuzzleFlash(shooterEntry);
+    const bulletR = 0.12 * Math.min(2.2, Math.max(0.6, shooterEntry.size));
+    (s.bullets || []).forEach(b => spawnSegmentBullet(shooterEntry.color, b.segments, bulletR));
+  };
+  // จิตพยาบาท: let the corpse finish standing back up before it actually fires
+  if (s.revenge) setTimeout(fireNow, REVENGE_RISE_MS);
+  else fireNow();
 }
 
 // ---------- main loop ----------

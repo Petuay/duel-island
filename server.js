@@ -11,7 +11,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: res => res.setHeader('Cache-Control', 'no-cache')
 }));
 
-const POWER_PICK_DURATION = 12000; // ms to choose 1 of 3 latent powers (once, at match start)
+const POWER_PICK_DURATION = 12000; // ms to choose 1 of 2 latent powers (once, at match start)
 const CARD_PICK_DURATION = 10000; // ms to choose 1 of 3 dealt cards
 const PLACE_DURATION = 20000; // ms to walk, aim & aim the chosen card
 const NEXT_ROUND_DELAY = 3000; // pause after reveal before next round starts
@@ -25,9 +25,10 @@ const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror', '
 const AREA_CARDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage']);
 // area cards are dealt a third as often as self-buff cards
 const cardWeight = id => (AREA_CARDS.has(id) ? 1 : 3);
-// deal 3 distinct cards, weighted so area cards show up less
-function dealChoices() {
-  const pool = CARD_IDS.slice();
+// deal 3 distinct cards, weighted so area cards show up less. `excludeArea` is used for a
+// นักสะสม holder already sitting on a banked area card, to guarantee only one is ever active.
+function dealChoices(excludeArea) {
+  const pool = excludeArea ? CARD_IDS.filter(id => !AREA_CARDS.has(id)) : CARD_IDS.slice();
   const out = [];
   for (let i = 0; i < 3 && pool.length; i++) {
     let total = pool.reduce((s, id) => s + cardWeight(id), 0);
@@ -36,6 +37,11 @@ function dealChoices() {
     out.push(pool.splice(idx, 1)[0]);
   }
   return out;
+}
+// นักสะสม: which card the placement UI/hitbox this round actually belongs to — the banked
+// one if it's an area card (dealing already guarantees the fresh pick isn't, in that case).
+function effectiveAreaCard(p) {
+  return (p.bankedCard && AREA_CARDS.has(p.bankedCard)) ? p.bankedCard : p.card;
 }
 const DIVINE_ANGLE_A = Math.PI / 6; // 30deg
 const DIVINE_ANGLE_B = Math.PI / 3; // 60deg
@@ -100,12 +106,12 @@ function reflect(dx, dz, nx, nz) {
 }
 
 // ---- Latent powers (each player picks one at match start, fixed for the match) ----
-const POWER_IDS = ['matrix', 'drunken', 'revenger', 'man'];
+const POWER_IDS = ['matrix', 'drunken', 'revenger', 'man', 'clairvoyant', 'collector'];
 // deal 3 distinct powers to choose from
 function dealPowerChoices() {
   const pool = POWER_IDS.slice();
   const out = [];
-  for (let i = 0; i < 3 && pool.length; i++) {
+  for (let i = 0; i < 2 && pool.length; i++) {
     out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
   }
   return out;
@@ -262,10 +268,11 @@ class Room {
   setCardArea(id, x, z) {
     if (this.state !== 'placing') return;
     const p = this.players.get(id);
-    if (!p || !p.alive || p.ready || !AREA_CARDS.has(p.card)) return;
+    const areaCard = p && effectiveAreaCard(p);
+    if (!p || !p.alive || p.ready || !AREA_CARDS.has(areaCard)) return;
     const lim = this.islandSize / 2 - 0.5;
     const cx = Math.max(-lim, Math.min(lim, x)), cz = Math.max(-lim, Math.min(lim, z));
-    if (p.card === 'cyclone' && p.cardArea) {
+    if (areaCard === 'cyclone' && p.cardArea) {
       p.cardAngle = Math.atan2(cx - p.cardArea.x, cz - p.cardArea.z);
       io.to(id).emit('cardAreaSet', { ...p.cardArea, angle: p.cardAngle });
       return;
@@ -278,7 +285,7 @@ class Room {
   rotateCardArea(id) {
     if (this.state !== 'placing') return;
     const p = this.players.get(id);
-    if (!p || !p.alive || p.ready || p.card !== 'wall') return;
+    if (!p || !p.alive || p.ready || effectiveAreaCard(p) !== 'wall') return;
     p.wallRot = ((p.wallRot || 0) + Math.PI / 4) % (Math.PI * 2);
     io.to(id).emit('cardRotSet', { rot: p.wallRot });
   }
@@ -324,7 +331,10 @@ class Room {
       p.eliminatedRound = null; // round they died (null = still alive / winner)
       p.frozenZone = null;       // กรงหิมะ: pending freeze for the player's next placement phase
       p.activeFrozenZone = null; // กรงหิมะ: freeze actively constraining movement this round
-      // each player picks one latent power from 3 dealt choices (bots auto-pick)
+      p.eyeTargetId = null;      // เนตรทิพย์: whichever alive opponent is being watched this round
+      p.bankedCard = null;       // นักสะสม: a card held over from a previous round, if any
+      p.cardBanked = false;      // นักสะสม: true if this round's card is being banked instead of used
+      // each player picks one latent power from 2 dealt choices (bots auto-pick)
       p.power = null;
       p.powerChoices = dealPowerChoices();
       if (p.isBot) p.power = p.powerChoices[Math.floor(Math.random() * p.powerChoices.length)];
@@ -388,11 +398,14 @@ class Room {
       p.ready = false;
       p.shotTargetId = null;
       p.card = null;
-      p.cardArea = null;
-      p.cardAngle = null;
-      p.wallRot = 0;
-      // deal 3 distinct cards to choose from (area cards weighted to appear less)
-      p.cardChoices = dealChoices();
+      p.cardBanked = false;
+      // นักสะสม holding a banked area card only gets self-buff choices this round, so at most
+      // one area card is ever active between the banked one and the fresh one — and its
+      // placement (position/rotation) is preserved across the round instead of being wiped,
+      // since this round's placement UI is driven by that banked card, not the fresh pick.
+      const excludeArea = p.power === 'collector' && p.bankedCard && AREA_CARDS.has(p.bankedCard);
+      if (!excludeArea) { p.cardArea = null; p.cardAngle = null; p.wallRot = 0; }
+      p.cardChoices = dealChoices(excludeArea);
       // bots choose one of their 3 immediately
       if (p.isBot) p.card = p.cardChoices[Math.floor(Math.random() * p.cardChoices.length)];
     }
@@ -408,7 +421,7 @@ class Room {
       roster
     });
     for (const p of aliveList) {
-      if (!p.isBot) io.to(p.id).emit('yourChoices', { choices: p.cardChoices });
+      if (!p.isBot) io.to(p.id).emit('yourChoices', { choices: p.cardChoices, bankedCard: p.bankedCard || null });
     }
     clearTimeout(this.timer);
     this.maybeBeginPlacement();
@@ -420,7 +433,19 @@ class Room {
     const p = this.players.get(id);
     if (!p || !p.alive || !p.cardChoices || !p.cardChoices.includes(card)) return;
     p.card = card;
+    p.cardBanked = false; // picking again after a bank decision un-banks this round's choice
     io.to(id).emit('cardPicked', { card });
+    this.maybeBeginPlacement();
+  }
+
+  // นักสะสม: bank the card just picked instead of using it this round — it carries into next
+  // round alongside whatever gets dealt then. Only one card can be held in the bank at a time.
+  bankCard(id) {
+    if (this.state !== 'cardpick') return;
+    const p = this.players.get(id);
+    if (!p || !p.alive || p.power !== 'collector' || p.bankedCard || !p.card) return;
+    p.cardBanked = true;
+    io.to(id).emit('cardBanked', { card: p.card });
     this.maybeBeginPlacement();
   }
 
@@ -447,10 +472,11 @@ class Room {
       if (p.isBot) {
         this.decideBotMove(p, half);
         p.ready = true;
-        if (p.card === 'cyclone') {
+        const areaCard = effectiveAreaCard(p);
+        if (areaCard === 'cyclone') {
           p.cardArea = { x: (Math.random() * 2 - 1) * half, z: (Math.random() * 2 - 1) * half };
           p.cardAngle = Math.random() * Math.PI * 2;
-        } else if (AREA_CARDS.has(p.card)) {
+        } else if (AREA_CARDS.has(areaCard)) {
           p.cardArea = { x: (Math.random() * 2 - 1) * half, z: (Math.random() * 2 - 1) * half };
         }
       } else {
@@ -465,6 +491,17 @@ class Room {
         p.angle = Math.random() * Math.PI * 2;
       }
     }
+    // เนตรทิพย์: assign a random other alive target each round, then relay their live position privately
+    for (const viewer of aliveList) {
+      if (viewer.power !== 'clairvoyant') { viewer.eyeTargetId = null; continue; }
+      const others = aliveList.filter(p => p.id !== viewer.id);
+      viewer.eyeTargetId = others.length ? others[Math.floor(Math.random() * others.length)].id : null;
+      if (viewer.eyeTargetId && !viewer.isBot) {
+        const target = this.players.get(viewer.eyeTargetId);
+        io.to(viewer.id).emit('eyeFootprint', { x: target.x, z: target.z });
+      }
+    }
+
     this.roundEndsAt = Date.now() + PLACE_DURATION;
     const roster = aliveList.map(p => ({ id: p.id, name: p.name, color: p.color }));
     io.to(this.code).emit('placeStart', {
@@ -476,7 +513,7 @@ class Room {
       roster
     });
     for (const p of aliveList) {
-      if (!p.isBot) io.to(p.id).emit('yourCard', { card: p.card, frozenZone: p.activeFrozenZone || null });
+      if (!p.isBot) io.to(p.id).emit('yourCard', { card: p.card, bankedCard: p.bankedCard || null, cardBanked: !!p.cardBanked, frozenZone: p.activeFrozenZone || null });
     }
     io.to(this.spectatorRoom).emit('spectateSnapshot', {
       round: this.round,
@@ -505,6 +542,10 @@ class Room {
     p.z = Math.max(minZ, Math.min(maxZ, z));
     p.angle = angle;
     io.to(this.spectatorRoom).emit('spectateMove', { id: p.id, x: p.x, z: p.z, angle: p.angle });
+    // เนตรทิพย์: relay this player's live position to anyone watching them this round
+    for (const viewer of this.players.values()) {
+      if (viewer.alive && viewer.eyeTargetId === id) io.to(viewer.id).emit('eyeFootprint', { x: p.x, z: p.z });
+    }
   }
 
   resolveRound() {
@@ -526,11 +567,26 @@ class Room {
       return a;
     };
 
+    // นักสะสม: which card(s) actually apply this round. Banking-this-round means no effect at
+    // all (it just gets saved); otherwise it's the fresh pick plus any card banked earlier.
+    const activeCardsOf = caster => {
+      if (caster.cardBanked) return [];
+      return caster.bankedCard ? [caster.card, caster.bankedCard] : [caster.card];
+    };
+    // for shot-shape cards (divine/bounce/thunder), the fresh pick wins if both active cards
+    // would define one — dealing already guarantees at most one active card is ever area-type
+    const effectiveShotCard = caster => {
+      const shapeCards = ['divine', 'bounce', 'thunder'];
+      if (shapeCards.includes(caster.card)) return caster.card;
+      if (caster.bankedCard && shapeCards.includes(caster.bankedCard)) return caster.bankedCard;
+      return caster.card;
+    };
+
     // 1. ไซโคลน pre-pass — the storm sweeps BEFORE anything else, since it changes the
     //    real positions combat will use for the rest of the round.
     const cyclones = [];
     for (const caster of alive) {
-      if (caster.card !== 'cyclone') continue;
+      if (!activeCardsOf(caster).includes('cyclone')) continue;
       const origin = resolveArea(caster);
       const angle = caster.cardAngle != null ? caster.cardAngle : Math.random() * Math.PI * 2;
       caster.cardAngle = angle;
@@ -558,40 +614,48 @@ class Room {
     const obstacles = []; // bullet-interactive area cards (wall / firework)
     const icecages = []; // กรงหิมะ zones (not bullet-interactive — freezes movement instead)
     for (const caster of alive) {
-      cards.push({ casterId: caster.id, card: caster.card, targetId: caster.id });
-      if (caster.card === 'cyclone') continue; // already resolved in the pre-pass above
-      if (caster.card === 'wall' || caster.card === 'firework') {
-        const a = resolveArea(caster);
-        obstacles.push(makeObstacle(obstacles.length, caster.card, a.x, a.z, { rot: caster.wallRot || 0 }));
+      if (caster.cardBanked) {
+        // นักสะสม: this round's pick is saved for later — no effect, no placement, no card-log entry
+        caster.bankedCard = caster.card;
         continue;
       }
-      if (caster.card === 'icecage') {
-        const a = resolveArea(caster);
-        const caughtIds = [];
-        for (const t of alive) {
-          if (Math.abs(t.x - a.x) <= ICECAGE_HALF && Math.abs(t.z - a.z) <= ICECAGE_HALF) {
-            t.frozenZone = {
-              minX: a.x - ICECAGE_HALF, maxX: a.x + ICECAGE_HALF,
-              minZ: a.z - ICECAGE_HALF, maxZ: a.z + ICECAGE_HALF
-            };
-            caughtIds.push(t.id);
-          }
+      for (const cardId of activeCardsOf(caster)) {
+        cards.push({ casterId: caster.id, card: cardId, targetId: caster.id });
+        if (cardId === 'cyclone') continue; // already resolved in the pre-pass above
+        if (cardId === 'wall' || cardId === 'firework') {
+          const a = resolveArea(caster);
+          obstacles.push(makeObstacle(obstacles.length, cardId, a.x, a.z, { rot: caster.wallRot || 0 }));
+          continue;
         }
-        icecages.push({ casterId: caster.id, x: a.x, z: a.z, caughtIds });
-        continue;
+        if (cardId === 'icecage') {
+          const a = resolveArea(caster);
+          const caughtIds = [];
+          for (const t of alive) {
+            if (Math.abs(t.x - a.x) <= ICECAGE_HALF && Math.abs(t.z - a.z) <= ICECAGE_HALF) {
+              t.frozenZone = {
+                minX: a.x - ICECAGE_HALF, maxX: a.x + ICECAGE_HALF,
+                minZ: a.z - ICECAGE_HALF, maxZ: a.z + ICECAGE_HALF
+              };
+              caughtIds.push(t.id);
+            }
+          }
+          icecages.push({ casterId: caster.id, x: a.x, z: a.z, caughtIds });
+          continue;
+        }
+        if (cardId === 'thunder') {
+          resolveArea(caster); // strike itself happens on the caster's own firing-order turn
+          continue;
+        }
+        // self-buff cards
+        const e = fx.get(caster.id);
+        switch (cardId) {
+          case 'gobig': e.size *= goBigScale(); break;
+          case 'gosmall': e.size *= goSmallScale(); break;
+          case 'mirror': e.mirror = true; break;
+          // divine / bounce need no fx flag — checked directly via effectiveShotCard when they fire
+        }
       }
-      if (caster.card === 'thunder') {
-        resolveArea(caster); // strike itself happens on the caster's own firing-order turn
-        continue;
-      }
-      // self-buff cards
-      const e = fx.get(caster.id);
-      switch (caster.card) {
-        case 'gobig': e.size *= goBigScale(); break;
-        case 'gosmall': e.size *= goSmallScale(); break;
-        case 'mirror': e.mirror = true; break;
-        // divine / bounce need no fx flag — checked directly via caster.card when they fire
-      }
+      if (caster.bankedCard) caster.bankedCard = null; // consumed — one-time use
     }
 
     const firingOrder = shuffle(alive);
@@ -681,7 +745,10 @@ class Room {
             seg.manDeflect = victim.id;
             ev.man.push(victim.id);
             touched.add(victim.id);
-            ox = r.x; oz = r.z; ang = Math.random() * Math.PI * 2;
+            // reflects by angle of incidence off the victim's own facing, same physics as the bounce card
+            const rf = reflect(Math.sin(ang), Math.cos(ang), Math.sin(victim.angle), Math.cos(victim.angle));
+            ang = Math.atan2(rf.x, rf.z);
+            ox = r.x; oz = r.z;
             continue;
           }
           seg.hitId = r.hitId;
@@ -720,8 +787,10 @@ class Room {
         continue;
       }
 
+      const shotCard = effectiveShotCard(shooter);
+
       // ใครปักตะไคร้: strikes the caster's chosen area instead of firing a directional shot
-      if (shooter.card === 'thunder') {
+      if (shotCard === 'thunder') {
         const a = shooter.cardArea || { x: shooter.x, z: shooter.z };
         const victims = [];
         for (const t of alive) {
@@ -733,20 +802,20 @@ class Room {
         continue;
       }
 
-      // The Drunken: a third of the time the shot fires out the back instead
-      let baseAngle = shooter.angle, drunken = false;
-      if (shooter.power === 'drunken' && Math.random() < 1 / 3) { baseAngle += Math.PI; drunken = true; }
+      // The Drunken: 25% of the time fires ลูกซองแฉก's 4-bullet spread instead of the normal shot
+      const baseAngle = shooter.angle;
+      const drunken = shooter.power === 'drunken' && Math.random() < 0.25;
 
       const kills = new Set();
       const ev = { dodges: [], man: [], mirror: [] };
       let bullets;
-      if (shooter.card === 'divine') {
+      if (drunken || shotCard === 'divine') {
         // ลูกซองแฉก: 4 simultaneous bullets at +-30/+-60deg, capped to half the field diagonal
         const maxRange = fieldHalf * Math.SQRT2;
         const offsets = [-DIVINE_ANGLE_A, DIVINE_ANGLE_A, -DIVINE_ANGLE_B, DIVINE_ANGLE_B];
         bullets = offsets.map(o => ({ segments: fireBullet(shooter, baseAngle + o, 0, kills, ev, maxRange) }));
       } else {
-        const bounces = shooter.card === 'bounce' ? 2 : 0;
+        const bounces = shotCard === 'bounce' ? 2 : 0;
         bullets = [{ segments: fireBullet(shooter, baseAngle, bounces, kills, ev) }];
       }
       kills.forEach(id => stillAlive.delete(id));
@@ -961,6 +1030,12 @@ io.on('connection', socket => {
     const room = rooms.get(currentRoomCode);
     if (!room) return;
     room.pickCard(socket.id, card);
+  });
+
+  socket.on('bankCard', () => {
+    const room = rooms.get(currentRoomCode);
+    if (!room) return;
+    room.bankCard(socket.id);
   });
 
   socket.on('useCardArea', ({ x, z }) => {
