@@ -134,7 +134,7 @@ const CARDS = [
   { id: 'wall', emoji: '🌳', name: 'ต้นไม้ให้ร่ม', desc: 'พื้นที่: คลิกซ้ายวางแถวต้นไม้ 1×3 บังกระสุน • คลิกขวาหมุน 45°' },
   { id: 'cyclone', emoji: '🌀', name: 'ไซโคลน', desc: 'พื้นที่: คลิกซ้ายวางจุดเริ่มพายุ แล้วคลิกซ้ำเพื่อกำหนดทิศ ก่อนยิงนัดแรกพายุจะพัดผ่าน 5 บล็อก ดูดคนที่โดนไป 2 บล็อก' },
   { id: 'firework', emoji: '🌋', name: 'ปอมเปอี', desc: 'พื้นที่: วางภูเขาไฟ 1×1 ถ้ากระสุนโดน ระเบิดฆ่าทุกคนในระยะ 3×3' },
-  { id: 'icecage', emoji: '❄️', name: 'กรงหิมะ', desc: 'พื้นที่: แช่แข็งโซน 4×4 ใครยืนอยู่ในนั้นตอนเปิดผล ตาถัดไปจะเดินได้แค่ในโซนนี้เท่านั้น' }
+  { id: 'icecage', emoji: '❄️', name: 'กรงหิมะ', desc: 'พื้นที่: แช่แข็งโซน 3×3 ใครยืนอยู่ในนั้นตอนเปิดผล ตาถัดไปจะเดินได้แค่ในโซนนี้เท่านั้น' }
 ];
 const cardById = id => CARDS.find(c => c.id === id) || null;
 const AREA_CARD_IDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage']);
@@ -1458,7 +1458,7 @@ function applyGhostTint(group, opacity) {
 // ---------- Area-card obstacles (ต้นไม้ให้ร่ม / ใครปักตะไคร้ / ปอมเปอี / กรงหิมะ) ----------
 // (ไซโคลน is handled separately below — it's a point+direction, not a placed box)
 const THUNDER_HALF_C = 1.0;
-const ICECAGE_HALF_C = 2.0;
+const ICECAGE_HALF_C = 1.5;
 let areaMarker = null;      // my own placement ghost during the placement phase
 let obstacleMeshes = [];    // reveal-phase obstacle meshes
 
@@ -2081,6 +2081,10 @@ let revealMeshMap = new Map();
 let revealShots = [];
 let revealClock = 0;
 let revealActive = false;
+let bannerFireTime = 0;   // gated revealClock threshold for the elimination banner (not real time)
+let bannerShown = false;
+let pendingEliminated = [];
+let pendingSurvivorCount = 0;
 
 function clearRevealMeshes() {
   revealMeshes.forEach(r => {
@@ -2147,7 +2151,7 @@ const CARD_INSTRUCTIONS = {
   wall: '🌳 คลิกซ้ายวางแถวต้นไม้ • คลิกขวาหมุนทิศ 45° ต่อครั้ง',
   thunder: '⚡ คลิกซ้ายเพื่อเลือกจุดที่จะให้ฟ้าผ่าลง',
   firework: '🌋 คลิกซ้ายเพื่อวางภูเขาไฟบนสนาม',
-  icecage: '❄️ คลิกซ้ายเพื่อวางโซนแช่แข็ง 4×4'
+  icecage: '❄️ คลิกซ้ายเพื่อวางโซนแช่แข็ง 3×3'
 };
 function showCardInstructionBanner() {
   clearTimeout(cardInstructionTimer);
@@ -2315,24 +2319,26 @@ socket.on('roundResult', data => {
   revealClock = 0;
   revealActive = true;
 
-  const bannerDelay = SHOT_START_DELAY + cycloneIntro + data.shots.length * SHOT_INTERVAL + pausedTotal + 900;
-  setTimeout(() => {
-    const names = data.eliminated.map(id => {
-      const pl = data.players.find(p => p.id === id);
-      return pl ? pl.name : '?';
-    });
-    const banner = $('banner');
-    const elimEl = $('eliminatedList');
-    if (names.length) {
-      banner.textContent = `💥 ตกรอบ: ${names.join(', ')}`;
-    } else {
-      banner.textContent = '😮 ไม่มีใครโดนยิงรอบนี้';
-    }
-    elimEl.textContent = data.survivors.length + ' คนยังรอด';
-    banner.classList.remove('hidden');
-    elimEl.classList.remove('hidden');
-  }, bannerDelay);
+  // driven by the gated revealClock (not a real-time setTimeout) so it still waits for the
+  // camera to settle after the last shot, even if that took longer than this base estimate
+  bannerFireTime = SHOT_START_DELAY + cycloneIntro + data.shots.length * SHOT_INTERVAL + pausedTotal + 900;
+  bannerShown = false;
+  pendingEliminated = data.eliminated;
+  pendingSurvivorCount = data.survivors.length;
 });
+
+function showEliminationBanner() {
+  const names = pendingEliminated.map(id => {
+    const pl = playerInfo.get(id);
+    return pl ? pl.name : '?';
+  });
+  const banner = $('banner');
+  const elimEl = $('eliminatedList');
+  banner.textContent = names.length ? `💥 ตกรอบ: ${names.join(', ')}` : '😮 ไม่มีใครโดนยิงรอบนี้';
+  elimEl.textContent = pendingSurvivorCount + ' คนยังรอด';
+  banner.classList.remove('hidden');
+  elimEl.classList.remove('hidden');
+}
 
 socket.on('nextRoundCountdown', () => {
   // handled implicitly, next 'roundStart' will fire
@@ -2385,20 +2391,27 @@ function updateCycloneIntro(dt) {
   }
 }
 
+const CAMERA_SETTLE_EPS = 0.5; // how close the reveal camera must get before new effects are allowed to start
+
 function updateReveal(dt) {
   if (!revealActive) return;
-  revealClock += dt * 1000;
 
   // pull the camera in on a player whose hidden power is firing, else the wide overview
+  let camTarget;
   if (zoomFocus && revealClock < zoomFocus.until) {
     zoomCamPos.set(zoomFocus.x, 5.5, zoomFocus.z + 5);
-    camera.position.lerp(zoomCamPos, 0.09);
+    camTarget = zoomCamPos;
+    camera.position.lerp(camTarget, 0.09);
     camera.lookAt(zoomFocus.x, 0.6, zoomFocus.z);
   } else {
     if (zoomFocus) zoomFocus = null;
-    camera.position.lerp(overviewCamTarget, 0.04);
+    camTarget = overviewCamTarget;
+    camera.position.lerp(camTarget, 0.08);
     camera.lookAt(0, 0, 0);
   }
+  // every effect (next shot, the cyclone intro, the elimination banner) waits for the camera
+  // to actually settle back at its current target before the reveal clock advances further
+  if (camera.position.distanceTo(camTarget) < CAMERA_SETTLE_EPS) revealClock += dt * 1000;
 
   revealShots.forEach(s => {
     if (s.triggered || revealClock < s.fireTime) return;
@@ -2406,6 +2419,11 @@ function updateReveal(dt) {
     revealOrderRow(s);
     triggerShot(s);
   });
+
+  if (!bannerShown && revealClock >= bannerFireTime) {
+    bannerShown = true;
+    showEliminationBanner();
+  }
 
   revealMeshes.forEach(entry => {
     if (entry.dying) {

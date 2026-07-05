@@ -44,7 +44,7 @@ const FIREWORK_KILL = 1.5; // half-size of the 3x3 block explosion
 const CYCLONE_TRAVEL = 5; // blocks the storm sweeps forward
 const CYCLONE_HALF_WIDTH = 1.0; // perpendicular half-width of the storm's path corridor
 const CYCLONE_PULL = 2; // blocks a caught player is dragged along the storm's direction
-const ICECAGE_HALF = 2.0; // กรงหิมะ: half-size of the 4x4 freeze zone
+const ICECAGE_HALF = 1.5; // กรงหิมะ: half-size of the 3x3 freeze zone
 
 // build an obstacle for a bullet-interactive area card at (x,z) — wall is a rotatable
 // oriented rectangle (OBB), firework is a small axis-aligned trigger box
@@ -123,6 +123,8 @@ const SHOT_START_DELAY = 4200; // pause (also the firing-order shuffle window) b
 const SHOT_INTERVAL = 1300; // gap between each player's turn to fire
 const SHOT_END_PAUSE = 800; // pause after the last shot before advancing
 const POWER_PAUSE = 1900; // extra gap after a shot that triggered a power/mirror zoom (let it finish)
+const CYCLONE_INTRO_DURATION_C = 1500; // mirrors client CYCLONE_INTRO_DURATION
+const CAMERA_SETTLE_SLACK = 1500; // extra buffer since effects now wait for the reveal camera to settle
 // a shot that pulls the camera in on a hidden power (or mirror) — the reveal waits for it
 function shotHasZoom(s) {
   return !!(s.drunken || s.revenge || (s.dodges && s.dodges.length) ||
@@ -811,7 +813,12 @@ class Room {
     io.to(this.code).emit('roundResult', payload);
 
     const zoomCount = shots.filter(shotHasZoom).length;
-    const revealDuration = SHOT_START_DELAY + shots.length * SHOT_INTERVAL + SHOT_END_PAUSE + zoomCount * POWER_PAUSE;
+    const cycloneIntro = cyclones.length ? CYCLONE_INTRO_DURATION_C : 0;
+    // CAMERA_SETTLE_SLACK: the client now waits for its reveal camera to actually finish
+    // panning back to normal before each next effect fires, which can add a little real
+    // time beyond this formula — pad the server's timeout so it never cuts the reveal short.
+    const revealDuration = SHOT_START_DELAY + cycloneIntro + shots.length * SHOT_INTERVAL
+      + SHOT_END_PAUSE + zoomCount * POWER_PAUSE + CAMERA_SETTLE_SLACK;
     this.timer = setTimeout(() => this.afterReveal(), revealDuration);
   }
 
