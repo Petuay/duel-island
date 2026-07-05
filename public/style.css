@@ -220,6 +220,9 @@ button.secondary:active { box-shadow: 0 2px 0 #d9902a; }
   color: #d9534f;
   box-shadow: 0 10px 24px rgba(30,60,100,0.25);
 }
+#hud .cardInstructionBanner {
+  color: #2f6fb0; font-size: 16px; max-width: 480px;
+}
 #hud .eliminatedList {
   position: absolute; top: 158px; left: 50%; transform: translateX(-50%);
   font-size: 14px; font-weight: 600; color: #3fa0f0; text-align: center;

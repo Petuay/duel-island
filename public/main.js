@@ -122,24 +122,29 @@ let currentIslandSize = 16;
 let currentRound = 1;
 
 // ---------- Special cards (dealt one per round) ----------
+// self-buff cards apply to the caster automatically (no target picking); area cards are
+// placed on the field by clicking, some with extra interactions noted per-card below.
 const CARDS = [
-  { id: 'gobig', emoji: '🐘', name: 'เบิ้ม ๆ', desc: 'ขยายร่างเป้า +70% โดนง่ายขึ้น แต่กระสุนก็ใหญ่ขึ้น (ลุ้น 10% ใหญ่ 200%) • ซ้อนกันได้' },
-  { id: 'gosmall', emoji: '🐜', name: 'จิ๋ว ๆ', desc: 'ย่อร่างเป้าเล็กลง โดนยากขึ้น (ลุ้น 10% เล็กสุด ๆ) • ซ้อนกันได้' },
-  { id: 'divine', emoji: '😇', name: 'ลูกซองแฉก', desc: 'กระสุนเป้าแตกเป็นแฉก 30° ยิงออกสองนัด' },
-  { id: 'bounce', emoji: '🎾', name: 'กระสุนเด้ง', desc: 'กระสุนเป้าเด้งได้ 1 ครั้งแบบสุ่ม' },
-  { id: 'thunder', emoji: '⚡', name: 'ฟ้าฝนไม่เป็นใจ', desc: '50% ปืนขัดข้อง / 50% ปล่อยสายฟ้ารอบตัว 1 บล็อก' },
-  { id: 'mirror', emoji: '🪞', name: 'กระจกหกด้าน', desc: 'เป้าได้เกราะหนาม สะท้อนกระสุนกลับไปหาคนยิง' },
-  { id: 'wall', emoji: '🧱', name: 'กำแพงกันดิน', desc: 'พื้นที่: วางกำแพง 1×3 บล็อก บังกระสุนไม่ให้ผ่าน' },
-  { id: 'cyclone', emoji: '🌀', name: 'ลมหมุน', desc: 'พื้นที่: วางไซโคลน 2×2 บล็อก กระสุนที่ผ่านจะเปลี่ยนทิศแบบสุ่ม' },
-  { id: 'firework', emoji: '🎆', name: 'พลุไฟ', desc: 'พื้นที่: วางพลุ 1×1 บล็อก ถ้ากระสุนโดน ระเบิดฆ่าทุกคนในระยะ 3×3' }
+  { id: 'gobig', emoji: '🐘', name: 'เบิ้ม ๆ', desc: 'ขยายร่างตัวเอง +70% โดนง่ายขึ้น แต่กระสุนก็ใหญ่ขึ้น (ลุ้น 10% ใหญ่ 200%)' },
+  { id: 'gosmall', emoji: '🐜', name: 'จิ๋ว ๆ', desc: 'ย่อร่างตัวเองเล็กลง โดนยากขึ้น (ลุ้น 10% เล็กสุด ๆ)' },
+  { id: 'divine', emoji: '🔫', name: 'ลูกซองแฉก', desc: 'ยิง 4 นัดพร้อมกัน มุม ±30° และ ±60° จากทิศเล็ง ระยะจำกัดครึ่งเส้นทแยงมุมสนาม' },
+  { id: 'bounce', emoji: '🎾', name: 'กระสุนเด้ง', desc: 'กระสุนตัวเองเด้งได้ 2 ครั้ง สะท้อนตามมุมตกกระทบ (ไม่สุ่มทิศ)' },
+  { id: 'mirror', emoji: '🪞', name: 'กระจกหกด้าน', desc: 'ตัวเองได้เกราะหนาม สะท้อนกระสุนกลับไปหาคนยิง' },
+  { id: 'thunder', emoji: '⚡', name: 'ใครปักตะไคร้', desc: 'พื้นที่: เลือกจุด ตาที่ยิงของตัวเองจะเรียกสายฟ้าลงระเบิดจุดนั้น 2×2 แทนการยิงปืน' },
+  { id: 'wall', emoji: '🌳', name: 'ต้นไม้ให้ร่ม', desc: 'พื้นที่: คลิกซ้ายวางแถวต้นไม้ 1×3 บังกระสุน • คลิกขวาหมุน 45°' },
+  { id: 'cyclone', emoji: '🌀', name: 'ไซโคลน', desc: 'พื้นที่: คลิกซ้ายวางจุดเริ่มพายุ แล้วคลิกซ้ำเพื่อกำหนดทิศ ก่อนยิงนัดแรกพายุจะพัดผ่าน 5 บล็อก ดูดคนที่โดนไป 2 บล็อก' },
+  { id: 'firework', emoji: '🌋', name: 'ปอมเปอี', desc: 'พื้นที่: วางภูเขาไฟ 1×1 ถ้ากระสุนโดน ระเบิดฆ่าทุกคนในระยะ 3×3' },
+  { id: 'icecage', emoji: '❄️', name: 'กรงหิมะ', desc: 'พื้นที่: แช่แข็งโซน 4×4 ใครยืนอยู่ในนั้นตอนเปิดผล ตาถัดไปจะเดินได้แค่ในโซนนี้เท่านั้น' }
 ];
 const cardById = id => CARDS.find(c => c.id === id) || null;
-const AREA_CARD_IDS = new Set(['wall', 'cyclone', 'firework']);
+const AREA_CARD_IDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage']);
 const isAreaCard = id => AREA_CARD_IDS.has(id);
-let myCardArea = null; // where I placed my area card this round
-let roster = [];        // alive players this round (for the card target picker)
+let myCardArea = null;  // where I placed my area card this round
+let myCycloneAngle = null; // ไซโคลน: chosen sweep direction (radians), once position is locked
+let myWallRot = 0;       // ต้นไม้ให้ร่ม: current rotation (radians), stepped by right-click
+let myFrozenZone = null; // กรงหิมะ: my personal movement clamp this round, if I got frozen last round
+let roster = [];        // alive players this round (shown in the reveal/order panel)
 let myCard = null;      // the card I was dealt this round
-let myCardTarget = null; // whom I aimed my card at
 
 // mirrors server.js timing constants for the sequential fire animation
 const SHOT_START_DELAY = 4200;
@@ -343,12 +348,12 @@ socket.on('roomList', ({ rooms }) => { openRoomsCache = rooms; renderOpenRooms()
 // ---------- Reference guide (collapsible list of all cards + powers) ----------
 function buildGuide() {
   const powerOrder = ['matrix', 'drunken', 'revenger', 'man'];
-  let html = '<div class="guideHead">🃏 การ์ดพลัง (สุ่มทุกตา)</div>';
+  let html = '<div class="guideHead">🃏 การ์ดพลัง (สุ่มแจกเลือก 1 จาก 3 ทุกรอบ)</div>';
   CARDS.forEach(c => {
     html += `<div class="guideItem"><span class="gEmoji">${c.emoji}</span>
       <span><b>${c.name}</b> — ${c.desc}</span></div>`;
   });
-  html += '<div class="guideHead">⚡ พลังแฝง (สุ่มตอนเริ่มเกม ซ่อนไว้)</div>';
+  html += '<div class="guideHead">⚡ พลังแฝง (เลือกตอนเริ่มเกม ใช้ตลอดแมทช์ คนอื่นไม่รู้จนกว่าจะโดนเปิด)</div>';
   powerOrder.forEach(pid => {
     const d = (POWER_DESC[pid] || '').replace(/^[^—]*—\s*/, '');
     html += `<div class="guideItem"><span class="gEmoji">${POWER_EMOJI[pid]}</span>
@@ -1356,7 +1361,6 @@ function spawnMuzzleFlash(entry) {
   fxSprites.push({ sprite, life: 0, duration: 0.18 });
 }
 
-const THUNDER_RADIUS_C = 1.6; // mirrors server THUNDER_RADIUS
 
 // an additive glow flash (muzzle / lightning / spark), fades and grows
 function spawnFlash(x, y, z, baseScale, color, duration) {
@@ -1376,8 +1380,13 @@ function spawnFlash(x, y, z, baseScale, color, duration) {
 function spawnSegmentBullet(color, segments, radius) {
   if (!segments || !segments.length) return;
   const pts = [new THREE.Vector3(segments[0].x1, 0.55, segments[0].z1)];
-  const hitAt = [null], explodeAt = [null];
-  segments.forEach(sg => { pts.push(new THREE.Vector3(sg.x2, 0.55, sg.z2)); hitAt.push(sg.hitId || null); explodeAt.push(sg.explode || null); });
+  const hitAt = [null], explodeAt = [null], mirrorAt = [null];
+  segments.forEach(sg => {
+    pts.push(new THREE.Vector3(sg.x2, 0.55, sg.z2));
+    hitAt.push(sg.hitId || null);
+    explodeAt.push(sg.explode || null);
+    mirrorAt.push(sg.mirror || null);
+  });
   const cum = [0];
   for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
   const geo = new THREE.SphereGeometry(radius, 12, 12);
@@ -1393,15 +1402,18 @@ function spawnSegmentBullet(color, segments, radius) {
   glow.scale.setScalar(radius * 4);
   glow.position.copy(pts[0]);
   scene.add(glow);
-  fxBullets.push({ mesh, glow, pts, cum, hitAt, explodeAt, total: cum[cum.length - 1], dist: 0, nextIdx: 1 });
+  fxBullets.push({
+    mesh, glow, pts, cum, hitAt, explodeAt, mirrorAt,
+    total: cum[cum.length - 1], dist: 0, nextIdx: 1, shieldMesh: null
+  });
 }
 
-// The Thunder VFX: bright bolt glow at the caster plus sparks across the kill radius
-function spawnLightning(entry) {
-  spawnFlash(entry.x, 1.5, entry.z, 2.4, 0xaad4ff, 0.55);
+// ใครปักตะไคร้ VFX: bright bolt glow at the struck area plus sparks across the 2x2 zone
+function spawnLightning(x, z) {
+  spawnFlash(x, 1.5, z, 2.4, 0xaad4ff, 0.55);
   for (let i = 0; i < 9; i++) {
-    const a = Math.random() * Math.PI * 2, r = Math.random() * THUNDER_RADIUS_C;
-    spawnFlash(entry.x + Math.cos(a) * r, 0.4, entry.z + Math.sin(a) * r, 0.6, 0xdff0ff, 0.4);
+    const a = Math.random() * Math.PI * 2, r = Math.random() * THUNDER_HALF_C;
+    spawnFlash(x + Math.cos(a) * r, 0.4, z + Math.sin(a) * r, 0.6, 0xdff0ff, 0.4);
   }
 }
 
@@ -1416,46 +1428,81 @@ function spawnExplosion(ex) {
   (ex.victims || []).forEach(id => killVictim(id));
 }
 
-// ---------- Area-card obstacles (กำแพงกันดิน / ลมหมุน / พลุไฟ) ----------
+// ---------- Card-effect props (tree row / volcano / ice crystal / cyclone) ----------
+const TREE_CARD_COUNT = 3;
+const treeCardTemplates = [];
+let volcanoTemplate = null;
+let icecrystalTemplate = null;
+let cycloneTemplate = null;
+(() => {
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  for (let i = 0; i < TREE_CARD_COUNT; i++) {
+    loader.load(`models/treecard${i}.glb`, gltf => { treeCardTemplates[i] = gltf.scene; }, undefined, err => console.warn('[treecard] load failed:', i, err));
+  }
+  loader.load('models/volcano.glb', gltf => { volcanoTemplate = gltf.scene; }, undefined, err => console.warn('[volcano] load failed:', err));
+  loader.load('models/icecrystal.glb', gltf => { icecrystalTemplate = gltf.scene; }, undefined, err => console.warn('[icecrystal] load failed:', err));
+  loader.load('models/cyclone.glb', gltf => { cycloneTemplate = gltf.scene; }, undefined, err => console.warn('[cyclone] load failed:', err));
+})();
+// clone-then-dim a prop's materials so a ghost preview never mutates the shared template material
+function applyGhostTint(group, opacity) {
+  group.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    const wasArray = Array.isArray(o.material);
+    const mats = (wasArray ? o.material : [o.material]).map(m => {
+      const c = m.clone(); c.transparent = true; c.opacity = opacity; return c;
+    });
+    o.material = wasArray ? mats : mats[0];
+  });
+}
+
+// ---------- Area-card obstacles (ต้นไม้ให้ร่ม / ใครปักตะไคร้ / ปอมเปอี / กรงหิมะ) ----------
+// (ไซโคลน is handled separately below — it's a point+direction, not a placed box)
+const THUNDER_HALF_C = 1.0;
+const ICECAGE_HALF_C = 2.0;
 let areaMarker = null;      // my own placement ghost during the placement phase
 let obstacleMeshes = [];    // reveal-phase obstacle meshes
 
-function areaBox(type, x, z) {
+function areaBox(type, x, z, extra = {}) {
   if (type === 'wall') {
-    const longZ = Math.abs(x) >= Math.abs(z);
-    return { type, x, z, minX: x - (longZ ? 0.5 : 1.5), maxX: x + (longZ ? 0.5 : 1.5), minZ: z - (longZ ? 1.5 : 0.5), maxZ: z + (longZ ? 1.5 : 0.5) };
+    return { type, x, z, rot: extra.rot || 0, halfLen: 1.5, halfWid: 0.5 };
   }
-  const h = type === 'cyclone' ? 1.0 : 0.5;
+  const h = type === 'icecage' ? ICECAGE_HALF_C : (type === 'thunder' ? THUNDER_HALF_C : 0.5);
   return { type, x, z, minX: x - h, maxX: x + h, minZ: z - h, maxZ: z + h };
 }
 
 function makeObstacleMesh(o, ghost) {
   const g = new THREE.Group();
   if (o.type === 'wall') {
-    const box = new THREE.Mesh(new THREE.BoxGeometry(o.maxX - o.minX, 1.2, o.maxZ - o.minZ),
-      new THREE.MeshStandardMaterial({ color: 0xa5825f, transparent: !!ghost, opacity: ghost ? 0.4 : 1 }));
-    box.position.y = 0.6; g.add(box);
-  } else if (o.type === 'cyclone') {
-    const r = (o.maxX - o.minX) / 2;
-    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.5, r, 1.9, 22, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0x6fd0e8, transparent: true, opacity: ghost ? 0.25 : 0.42, side: THREE.DoubleSide }));
-    cyl.position.y = 0.95; g.add(cyl);
-    g.userData.spin = true;
-  } else {
-    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.5, 8),
-      new THREE.MeshStandardMaterial({ color: 0x7a4a2a }));
-    stick.position.y = 0.25; g.add(stick);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 12),
-      new THREE.MeshStandardMaterial({ color: 0xffcc33, emissive: 0xaa7711, transparent: !!ghost, opacity: ghost ? 0.5 : 1 }));
-    bulb.position.y = 0.62; g.add(bulb);
+    // a small row of 3 trees along the rectangle's long (local X) axis, echoing the 1x3 hitbox
+    const spacing = 1.0, cos = Math.cos(o.rot), sin = Math.sin(o.rot);
+    for (let i = -1; i <= 1; i++) {
+      placeGlbProp(treeCardTemplates[i + 1], g, i * spacing * cos, i * spacing * sin, 1.1, o.rot);
+    }
+  } else if (o.type === 'firework') {
+    placeGlbProp(volcanoTemplate, g, 0, 0, 1.3);
+  } else if (o.type === 'thunder') {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 8), new THREE.MeshStandardMaterial({ color: 0x6a7a8a }));
+    pole.position.y = 0.45; g.add(pole);
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 12),
+      new THREE.MeshStandardMaterial({ color: 0xaad4ff, emissive: 0x6fa8ff, emissiveIntensity: 0.8 }));
+    orb.position.y = 0.95; g.add(orb);
+  } else if (o.type === 'icecage') {
+    const half = ICECAGE_HALF_C;
+    [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(([sx, sz]) => {
+      placeGlbProp(icecrystalTemplate, g, sx * half * 0.85, sz * half * 0.85, 0.9);
+    });
+    const tint = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2),
+      new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true, opacity: ghost ? 0.18 : 0.28, depthWrite: false }));
+    tint.rotation.x = -Math.PI / 2; tint.position.y = 0.02; g.add(tint);
   }
+  if (ghost) applyGhostTint(g, 0.5);
   g.position.set(o.x, 0, o.z);
   return g;
 }
 
-function placeAreaMarker(type, x, z) {
+function placeAreaMarker(type, x, z, extra) {
   clearAreaMarker();
-  areaMarker = makeObstacleMesh(areaBox(type, x, z), true);
+  areaMarker = makeObstacleMesh(areaBox(type, x, z, extra), true);
   scene.add(areaMarker);
 }
 function clearAreaMarker() { if (areaMarker) { scene.remove(areaMarker); areaMarker = null; } }
@@ -1464,6 +1511,26 @@ function buildObstacles(list) {
   clearObstacles();
   (list || []).forEach(o => { const m = makeObstacleMesh(o, false); scene.add(m); obstacleMeshes.push(m); });
 }
+
+// ---------- ไซโคลน placement ghost (point + direction, not a placed box) ----------
+const CYCLONE_TRAVEL_C = 5;
+let cycloneGhost = null;
+function updateCycloneGhost() {
+  clearCycloneGhost();
+  if (myCard !== 'cyclone' || !myCardArea) return;
+  const g = new THREE.Group();
+  placeGlbProp(cycloneTemplate, g, 0, 0, 1.6);
+  if (myCycloneAngle != null) {
+    const dx = Math.sin(myCycloneAngle), dz = Math.cos(myCycloneAngle);
+    const pts = [new THREE.Vector3(0, 0.05, 0), new THREE.Vector3(dx * CYCLONE_TRAVEL_C, 0.05, dz * CYCLONE_TRAVEL_C)];
+    g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x6fd0e8 })));
+  }
+  applyGhostTint(g, 0.55);
+  g.position.set(myCardArea.x, 0, myCardArea.z);
+  scene.add(g);
+  cycloneGhost = g;
+}
+function clearCycloneGhost() { if (cycloneGhost) { scene.remove(cycloneGhost); cycloneGhost = null; } }
 
 function makeBloodDecal() {
   const geo = new THREE.PlaneGeometry(1.1 + Math.random() * 0.7, 1.1 + Math.random() * 0.7);
@@ -1516,14 +1583,46 @@ function updateFx(dt) {
   }
   for (let i = fxBullets.length - 1; i >= 0; i--) {
     const b = fxBullets[i];
-    b.dist += BULLET_SPEED * dt;
+
+    // Mirror card: slow the bullet as it nears the mirror-holder + grow a barrier there,
+    // right up until the reflect actually happens
+    let speedFactor = 1;
+    let mirrorIdx = -1;
+    for (let k = b.nextIdx; k < b.pts.length; k++) { if (b.mirrorAt[k]) { mirrorIdx = k; break; } }
+    if (mirrorIdx >= 0) {
+      const MIRROR_APPROACH = 1.5;
+      const distToMirror = b.cum[mirrorIdx] - b.dist;
+      if (distToMirror >= 0 && distToMirror <= MIRROR_APPROACH) {
+        const t = 1 - distToMirror / MIRROR_APPROACH; // 0 far -> 1 at arrival
+        speedFactor = 1 - 0.75 * t;
+        if (!b.shieldMesh) {
+          const shieldMat = new THREE.MeshBasicMaterial({
+            color: 0xbfe9ff, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false
+          });
+          b.shieldMesh = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 28), shieldMat);
+          b.shieldMesh.rotation.x = -Math.PI / 2;
+          b.shieldMesh.position.set(b.pts[mirrorIdx].x, 0.06, b.pts[mirrorIdx].z);
+          scene.add(b.shieldMesh);
+        }
+        b.shieldMesh.scale.setScalar(0.25 + t * 0.75);
+        b.shieldMesh.material.opacity = 0.35 + t * 0.5;
+      } else if (b.shieldMesh) {
+        scene.remove(b.shieldMesh); b.shieldMesh = null;
+      }
+    }
+    b.dist += BULLET_SPEED * dt * speedFactor;
+
     // trigger the kill / firework blast at any vertex we've now passed
     while (b.nextIdx < b.pts.length && b.dist >= b.cum[b.nextIdx]) {
       if (b.hitAt[b.nextIdx]) killVictim(b.hitAt[b.nextIdx]);
       if (b.explodeAt[b.nextIdx]) spawnExplosion(b.explodeAt[b.nextIdx]);
       b.nextIdx++;
     }
-    if (b.dist >= b.total) { scene.remove(b.mesh); scene.remove(b.glow); fxBullets.splice(i, 1); continue; }
+    if (b.dist >= b.total) {
+      scene.remove(b.mesh); scene.remove(b.glow);
+      if (b.shieldMesh) scene.remove(b.shieldMesh);
+      fxBullets.splice(i, 1); continue;
+    }
     let seg = 1;
     while (seg < b.cum.length && b.cum[seg] < b.dist) seg++;
     const s0 = b.cum[seg - 1], s1 = b.cum[seg];
@@ -1662,21 +1761,40 @@ window.addEventListener('mousemove', e => {
   mouseNdc.y = -(e.clientY / window.innerHeight) * 2 + 1;
 });
 
-// click on the field to place an area card (กำแพงกันดิน / ลมหมุน / พลุไฟ)
+// click on the field to place an area card. ไซโคลน is 2-phase: the first click locks the
+// storm's origin, every click after that instead re-aims its travel direction.
 canvas.addEventListener('click', e => {
   if (!placing || selfReady || spectating || !isAreaCard(myCard)) return;
   const ndc = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
   const hit = new THREE.Vector3();
-  if (raycaster.ray.intersectPlane(groundPlane, hit)) {
-    const lim = currentIslandSize / 2 - 0.5;
-    const x = Math.max(-lim, Math.min(lim, hit.x));
-    const z = Math.max(-lim, Math.min(lim, hit.z));
-    myCardArea = { x, z };
+  if (!raycaster.ray.intersectPlane(groundPlane, hit)) return;
+  const lim = currentIslandSize / 2 - 0.5;
+  const x = Math.max(-lim, Math.min(lim, hit.x));
+  const z = Math.max(-lim, Math.min(lim, hit.z));
+
+  if (myCard === 'cyclone' && myCardArea) {
+    myCycloneAngle = Math.atan2(x - myCardArea.x, z - myCardArea.z);
     socket.emit('useCardArea', { x, z });
-    placeAreaMarker(myCard, x, z);
+    updateCycloneGhost();
     updateCardHeader();
+    return;
   }
+  myCardArea = { x, z };
+  socket.emit('useCardArea', { x, z });
+  if (myCard === 'cyclone') updateCycloneGhost();
+  else placeAreaMarker(myCard, x, z, myCard === 'wall' ? { rot: myWallRot } : undefined);
+  updateCardHeader();
+});
+
+// right-click cycles ต้นไม้ให้ร่ม's rotation 45deg while it's being placed
+canvas.addEventListener('contextmenu', e => {
+  if (!placing || selfReady || spectating || myCard !== 'wall') return;
+  e.preventDefault();
+  if (!myCardArea) return;
+  myWallRot = (myWallRot + Math.PI / 4) % (Math.PI * 2);
+  socket.emit('rotateCardArea');
+  placeAreaMarker(myCard, myCardArea.x, myCardArea.z, { rot: myWallRot });
 });
 
 let selfColor = '#3498db';
@@ -1769,9 +1887,13 @@ socket.on('roundStart', data => {
   readyCount = 0;
   readyTotal = 0;
   myCard = null;
-  myCardTarget = null;
   myCardArea = null;
+  myCycloneAngle = null;
+  myWallRot = 0;
+  myFrozenZone = null;
+  updateFrozenZoneMarker();
   clearAreaMarker();
+  clearCycloneGhost();
   clearObstacles();
   roster = data.roster || [];
   roster.forEach(pl => playerInfo.set(pl.id, { name: pl.name, color: pl.color }));
@@ -1863,14 +1985,30 @@ socket.on('placeStart', data => {
 
 socket.on('yourCard', data => {
   myCard = data.card;
-  // rebuild the picker now that we know the card (roster vs. area-placement note)
+  myFrozenZone = data.frozenZone || null;
+  updateFrozenZoneMarker();
+  // rebuild the picker now that we know the card (self-buff note vs. area-placement UI)
   if (placing && !spectating) buildCardPicker();
 });
 
-socket.on('cardTargetSet', data => {
-  myCardTarget = data.targetId;
-  refreshPickHighlight();
-});
+// กรงหิมะ: a persistent ground marker showing my own movement clamp this round, if frozen
+let frozenZoneMarker = null;
+function updateFrozenZoneMarker() {
+  if (frozenZoneMarker) { scene.remove(frozenZoneMarker); frozenZoneMarker = null; }
+  if (!myFrozenZone) return;
+  const z = myFrozenZone;
+  const w = z.maxX - z.minX, d = z.maxZ - z.minZ;
+  const g = new THREE.Group();
+  [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(([sx, sz]) => {
+    placeGlbProp(icecrystalTemplate, g, sx * (w / 2) * 0.85, sz * (d / 2) * 0.85, 0.9);
+  });
+  const tint = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
+    new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true, opacity: 0.16, depthWrite: false }));
+  tint.rotation.x = -Math.PI / 2; tint.position.y = 0.02; g.add(tint);
+  g.position.set((z.minX + z.maxX) / 2, 0, (z.minZ + z.maxZ) / 2);
+  scene.add(g);
+  frozenZoneMarker = g;
+}
 
 // track color for self via roomUpdate
 socket.on('roomUpdate', data => {
@@ -1895,8 +2033,12 @@ function updatePlacement(dt) {
       const len = Math.hypot(mx, mz);
       selfPos.x += (mx / len) * speed * dt;
       selfPos.z += (mz / len) * speed * dt;
-      selfPos.x = Math.max(-bounds, Math.min(bounds, selfPos.x));
-      selfPos.z = Math.max(-bounds, Math.min(bounds, selfPos.z));
+      // กรงหิมะ: if I got frozen last round, my movement is clamped to that zone instead
+      const z = myFrozenZone;
+      const minX = z ? Math.max(-bounds, z.minX) : -bounds, maxX = z ? Math.min(bounds, z.maxX) : bounds;
+      const minZ = z ? Math.max(-bounds, z.minZ) : -bounds, maxZ = z ? Math.min(bounds, z.maxZ) : bounds;
+      selfPos.x = Math.max(minX, Math.min(maxX, selfPos.x));
+      selfPos.z = Math.max(minZ, Math.min(maxZ, selfPos.z));
     }
 
     // aim via mouse -> ground plane
@@ -1960,64 +2102,61 @@ function clearRevealMeshes() {
 }
 
 // ---------- Card picker (placement phase) ----------
-let cardRowMap = new Map();
-
+// Non-area cards apply to the caster automatically — no target to pick anymore.
+// Area cards are placed by clicking the field (some with extra interactions, noted per-card).
 function updateCardHeader() {
   const el = $('cardHeader');
   const c = cardById(myCard);
   if (!c) { el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
-  const hint = isAreaCard(myCard)
-    ? (myCardArea ? '✅ วางแล้ว! คลิกที่อื่นเพื่อย้าย' : 'คลิกบนสนามเพื่อวางการ์ด • ไม่วาง = สุ่มจุดให้')
-    : 'คลิกชื่อด้านล่างเพื่อเลือกเป้า • ไม่เลือก = สุ่มให้';
+  let hint = '✨ ใช้กับตัวเองทันที ไม่ต้องเลือกเป้า';
+  if (isAreaCard(myCard)) {
+    if (myCard === 'cyclone') {
+      hint = !myCardArea ? 'คลิกซ้ายวางจุดเริ่มพายุ'
+        : (myCycloneAngle != null ? '✅ ตั้งทิศแล้ว คลิกซ้ำเพื่อเปลี่ยนทิศ' : 'คลิกซ้ำเพื่อกำหนดทิศทาง');
+    } else {
+      hint = myCardArea ? '✅ วางแล้ว! คลิกที่อื่นเพื่อย้าย' : 'คลิกบนสนามเพื่อวางการ์ด • ไม่วาง = สุ่มจุดให้';
+      if (myCard === 'wall') hint += ' • คลิกขวาหมุน 45°';
+    }
+  }
   el.innerHTML = `<div class="cardEmoji">${c.emoji}</div>
     <div class="cardName">${c.name}</div>
     <div class="cardDesc">${c.desc}</div>
     <div class="cardHint">${hint}</div>`;
 }
 
-function refreshPickHighlight() {
-  cardRowMap.forEach((li, id) => {
-    const picked = id === myCardTarget;
-    li.classList.toggle('picked', picked);
-    li.querySelector('.pickMark').textContent = picked ? '🎯' : '';
-  });
-}
-
 function buildCardPicker() {
   const listEl = $('orderList');
   listEl.innerHTML = '';
-  cardRowMap.clear();
   clearInterval(orderShuffleTimer);
   $('orderPanelTitle').textContent = '🃏 การ์ดรอบนี้';
   updateCardHeader();
-  // area cards are placed on the field, not on a player — no roster to pick from
-  if (isAreaCard(myCard)) {
-    const note = document.createElement('li');
-    note.className = 'orderRow';
-    note.style.justifyContent = 'center';
-    note.innerHTML = '<span class="orderName" style="text-align:center">🖱️ คลิกบนสนามเพื่อวางการ์ด</span>';
-    listEl.appendChild(note);
-    $('orderPanel').classList.remove('hidden');
-    return;
-  }
-  roster.forEach(pl => {
-    const li = document.createElement('li');
-    li.className = 'orderRow pickRow';
-    li.innerHTML = `<span class="orderDot" style="background:${pl.color}"></span>
-      <span class="orderName">${escapeHtml(pl.name)}${pl.id === selfId ? ' (คุณ)' : ''}</span>
-      <span class="pickMark"></span>`;
-    li.addEventListener('click', () => {
-      if (!placing || selfReady) return;
-      myCardTarget = pl.id;
-      socket.emit('useCard', { targetId: pl.id });
-      refreshPickHighlight();
-    });
-    cardRowMap.set(pl.id, li);
-    listEl.appendChild(li);
-  });
-  refreshPickHighlight();
+  const note = document.createElement('li');
+  note.className = 'orderRow';
+  note.style.justifyContent = 'center';
+  note.innerHTML = `<span class="orderName" style="text-align:center">${isAreaCard(myCard) ? '🖱️ คลิกบนสนามเพื่อวางการ์ด' : '✨ ใช้กับตัวเองอัตโนมัติ'}</span>`;
+  listEl.appendChild(note);
   $('orderPanel').classList.remove('hidden');
+  showCardInstructionBanner();
+}
+
+// ---------- Area-card instructional banner (shown once per round, area cards only) ----------
+let cardInstructionTimer = null;
+const CARD_INSTRUCTIONS = {
+  cyclone: '🌀 คลิกซ้ายวางจุดเริ่มพายุ แล้วคลิกซ้ำเพื่อกำหนดทิศทาง (เปลี่ยนทิศได้จนกว่าจะพร้อม)',
+  wall: '🌳 คลิกซ้ายวางแถวต้นไม้ • คลิกขวาหมุนทิศ 45° ต่อครั้ง',
+  thunder: '⚡ คลิกซ้ายเพื่อเลือกจุดที่จะให้ฟ้าผ่าลง',
+  firework: '🌋 คลิกซ้ายเพื่อวางภูเขาไฟบนสนาม',
+  icecage: '❄️ คลิกซ้ายเพื่อวางโซนแช่แข็ง 4×4'
+};
+function showCardInstructionBanner() {
+  clearTimeout(cardInstructionTimer);
+  const el = $('cardInstructionBanner');
+  if (!el) return;
+  if (!isAreaCard(myCard)) { el.classList.add('hidden'); return; }
+  el.textContent = CARD_INSTRUCTIONS[myCard] || 'คลิกซ้ายเพื่อวางการ์ดบนสนาม';
+  el.classList.remove('hidden');
+  cardInstructionTimer = setTimeout(() => el.classList.add('hidden'), 4500);
 }
 
 // ---------- Firing order table ----------
@@ -2127,29 +2266,39 @@ socket.on('roundResult', data => {
   buildCardLog(data);       // which cards were played on whom this round (left)
   renderPowerLog();         // keep the revealed-powers list up to date (left)
   clearAreaMarker();        // remove my placement ghost; show the real obstacles instead
+  clearCycloneGhost();
   buildObstacles(data.obstacles);
+
+  // players caught in a ไซโคลน sweep this round start at their pre-storm position and
+  // glide to their final one during the cyclone reveal intro (see setupCycloneIntro below)
+  const cyclonePullById = new Map();
+  (data.cyclones || []).forEach(c => (c.pulls || []).forEach(p => cyclonePullById.set(p.id, p)));
 
   data.players.forEach(p => {
     const size = p.size || 1;
+    const pull = cyclonePullById.get(p.id);
+    const startX = pull ? pull.fromX : p.x, startZ = pull ? pull.fromZ : p.z;
     const mesh = makePlayerMesh(p.color, p.id === selfId, p.char);
-    mesh.position.set(p.x, 0, p.z);
+    mesh.position.set(startX, 0, startZ);
     mesh.rotation.y = p.angle;
     mesh.scale.setScalar(size);
     scene.add(mesh);
     const sprite = makeNameSprite(p.name + (p.id === selfId ? ' (คุณ)' : ''), p.color);
-    sprite.position.set(p.x, 1.7 * size + 0.2, p.z);
+    sprite.position.set(startX, 1.7 * size + 0.2, startZ);
     scene.add(sprite);
     const entry = {
-      mesh, sprite, id: p.id, x: p.x, z: p.z, angle: p.angle, color: p.color, size,
+      mesh, sprite, id: p.id, x: startX, z: startZ, angle: p.angle, color: p.color, size,
       wasHit: p.wasHit, dying: false, bloodSpawned: false
     };
     revealMeshes.push(entry);
     revealMeshMap.set(p.id, entry);
   });
+  setupCycloneIntro(data);
+  const cycloneIntro = (data.cyclones && data.cyclones.length) ? CYCLONE_INTRO_DURATION : 0;
 
   // blood/deaths are now triggered as the travelling bullets (or thunder) actually reach victims
   // each power/mirror zoom adds a pause so the camera returns to normal before the next shot fires
-  let acc = SHOT_START_DELAY, pausedTotal = 0;
+  let acc = SHOT_START_DELAY + cycloneIntro, pausedTotal = 0;
   revealShots = data.shots.map((s, i) => {
     const fireTime = acc;
     acc += SHOT_INTERVAL + (shotHasZoom(s) ? POWER_PAUSE : 0);
@@ -2166,7 +2315,7 @@ socket.on('roundResult', data => {
   revealClock = 0;
   revealActive = true;
 
-  const bannerDelay = SHOT_START_DELAY + data.shots.length * SHOT_INTERVAL + pausedTotal + 900;
+  const bannerDelay = SHOT_START_DELAY + cycloneIntro + data.shots.length * SHOT_INTERVAL + pausedTotal + 900;
   setTimeout(() => {
     const names = data.eliminated.map(id => {
       const pl = data.players.find(p => p.id === id);
@@ -2191,6 +2340,50 @@ socket.on('nextRoundCountdown', () => {
 
 const overviewCamTarget = new THREE.Vector3(0, 14, 10);
 const zoomCamPos = new THREE.Vector3();
+
+// ---------- ไซโคลน reveal sweep — plays once before the first shot, dragging caught players ----------
+const CYCLONE_INTRO_DURATION = 1500; // ms
+let cycloneRevealModels = []; // { mesh, from, to } for the storm(s) themselves
+let cyclonePulls = [];        // { entry, fromX, fromZ, toX, toZ } for players caught in a sweep
+function setupCycloneIntro(data) {
+  cycloneRevealModels.forEach(c => scene.remove(c.mesh));
+  cycloneRevealModels = [];
+  cyclonePulls = [];
+  (data.cyclones || []).forEach(c => {
+    const dx = Math.sin(c.angle), dz = Math.cos(c.angle);
+    const from = new THREE.Vector3(c.x, 0, c.z);
+    const to = new THREE.Vector3(c.x + dx * CYCLONE_TRAVEL_C, 0, c.z + dz * CYCLONE_TRAVEL_C);
+    const g = new THREE.Group();
+    placeGlbProp(cycloneTemplate, g, 0, 0, 1.6);
+    g.position.copy(from);
+    scene.add(g);
+    cycloneRevealModels.push({ mesh: g, from, to });
+    (c.pulls || []).forEach(p => {
+      const entry = revealMeshMap.get(p.id);
+      if (entry) cyclonePulls.push({ entry, fromX: p.fromX, fromZ: p.fromZ, toX: p.toX, toZ: p.toZ });
+    });
+  });
+}
+function updateCycloneIntro(dt) {
+  if (!cycloneRevealModels.length && !cyclonePulls.length) return;
+  const t = Math.min(1, revealClock / CYCLONE_INTRO_DURATION);
+  cycloneRevealModels.forEach(c => {
+    c.mesh.position.lerpVectors(c.from, c.to, t);
+    c.mesh.rotation.y += dt * 6;
+  });
+  cyclonePulls.forEach(p => {
+    const x = THREE.MathUtils.lerp(p.fromX, p.toX, t);
+    const z = THREE.MathUtils.lerp(p.fromZ, p.toZ, t);
+    p.entry.x = x; p.entry.z = z;
+    p.entry.mesh.position.set(x, 0, z);
+    if (p.entry.sprite) p.entry.sprite.position.set(x, 1.7 * p.entry.size + 0.2, z);
+  });
+  if (t >= 1 && cycloneRevealModels.length) {
+    cycloneRevealModels.forEach(c => scene.remove(c.mesh));
+    cycloneRevealModels = [];
+    cyclonePulls = [];
+  }
+}
 
 function updateReveal(dt) {
   if (!revealActive) return;
@@ -2225,8 +2418,7 @@ function updateReveal(dt) {
     }
   });
 
-  obstacleMeshes.forEach(m => { if (m.userData.spin) m.rotation.y += dt * 4; }); // swirl the cyclones
-
+  updateCycloneIntro(dt);
   updateFx(dt);
 }
 
@@ -2290,7 +2482,7 @@ function triggerShot(s) {
     if (s.jammed) {
       spawnFlash(shooterEntry.x, 0.7, shooterEntry.z, 0.6, 0xbfe0ff, 0.3); // gun fizzles
     } else {
-      spawnLightning(shooterEntry);
+      spawnLightning(s.x, s.z);
       (s.hitIds || []).forEach(id => setTimeout(() => killVictim(id), 220));
     }
     return;

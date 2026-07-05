@@ -20,10 +20,10 @@ const MIN_ISLAND_SIZE = 6;
 const SHRINK_FACTOR = 0.8;
 
 // ---- Special cards (dealt one per player each round) ----
-// player-target cards + area cards (placed on the ground instead of a player)
-const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror', 'wall', 'cyclone', 'firework'];
-const AREA_CARDS = new Set(['wall', 'cyclone', 'firework']);
-// area cards are dealt a third as often as player-target cards
+// self-buff cards (always applied to the caster) + area cards (placed on the ground)
+const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror', 'wall', 'cyclone', 'firework', 'icecage'];
+const AREA_CARDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage']);
+// area cards are dealt a third as often as self-buff cards
 const cardWeight = id => (AREA_CARDS.has(id) ? 1 : 3);
 // deal 3 distinct cards, weighted so area cards show up less
 function dealChoices() {
@@ -37,20 +37,23 @@ function dealChoices() {
   }
   return out;
 }
-const FORK_ANGLE = 0.2618; // 15deg -> two bullets 30deg apart (The Divine)
-const THUNDER_RADIUS = 1.6; // ~1 block kill radius (The Thunder)
+const DIVINE_ANGLE_A = Math.PI / 6; // 30deg
+const DIVINE_ANGLE_B = Math.PI / 3; // 60deg
+const THUNDER_STRIKE_HALF = 1.0; // ใครปักตะไคร้: half-size of the 2x2 strike zone
 const FIREWORK_KILL = 1.5; // half-size of the 3x3 block explosion
+const CYCLONE_TRAVEL = 5; // blocks the storm sweeps forward
+const CYCLONE_HALF_WIDTH = 1.0; // perpendicular half-width of the storm's path corridor
+const CYCLONE_PULL = 2; // blocks a caught player is dragged along the storm's direction
+const ICECAGE_HALF = 2.0; // กรงหิมะ: half-size of the 4x4 freeze zone
 
-// build an axis-aligned obstacle box for an area card at (x,z)
-function makeObstacle(i, type, x, z) {
+// build an obstacle for a bullet-interactive area card at (x,z) — wall is a rotatable
+// oriented rectangle (OBB), firework is a small axis-aligned trigger box
+function makeObstacle(i, type, x, z, extra = {}) {
   if (type === 'wall') {
-    // 1x3 wall, oriented so the long side is tangential to the field centre (acts as a shield)
-    const longZ = Math.abs(x) >= Math.abs(z);
-    return { i, type, x, z,
-      minX: x - (longZ ? 0.5 : 1.5), maxX: x + (longZ ? 0.5 : 1.5),
-      minZ: z - (longZ ? 1.5 : 0.5), maxZ: z + (longZ ? 1.5 : 0.5), longZ };
+    // 1x3 rectangle, free-rotated in 45deg steps by the caster (right-click)
+    return { i, type, x, z, rot: extra.rot || 0, halfLen: 1.5, halfWid: 0.5 };
   }
-  const h = type === 'cyclone' ? 1.0 : 0.5; // cyclone 2x2, firework 1x1
+  const h = 0.5; // firework: 1x1 trigger box (the 3x3 kill radius is applied separately on trigger)
   return { i, type, x, z, minX: x - h, maxX: x + h, minZ: z - h, maxZ: z + h };
 }
 // entry distance where ray (ox,oz)+t(dx,dz) enters an AABB, or null if it misses
@@ -63,6 +66,16 @@ function rayAABB(ox, oz, dx, dz, minX, maxX, minZ, maxZ) {
   if (tmax < tmin || tmax < 0) return null;
   return tmin > 0 ? tmin : 0;
 }
+// ray-vs-rotated-rectangle test: rotate the ray into the rectangle's own (axis-aligned) frame,
+// then reuse the AABB slab test above — lets the wall/tree-row card be placed at any angle
+function rayOBB(ox, oz, dx, dz, cx, cz, halfLen, halfWid, rot) {
+  const c = Math.cos(-rot), s = Math.sin(-rot);
+  const lx = (ox - cx) * c - (oz - cz) * s;
+  const lz = (ox - cx) * s + (oz - cz) * c;
+  const ldx = dx * c - dz * s;
+  const ldz = dx * s + dz * c;
+  return rayAABB(lx, lz, ldx, ldz, -halfLen, halfLen, -halfWid, halfWid);
+}
 // size multipliers for Go Big / Go Small (10% chance of the extreme version)
 function goBigScale() { return Math.random() < 0.1 ? 3.0 : 1.7; }
 function goSmallScale() { return Math.random() < 0.1 ? 0.3 : 0.55; }
@@ -70,18 +83,20 @@ function goSmallScale() { return Math.random() < 0.1 ? 0.3 : 0.55; }
 function effHitWidth(shooterSize, targetSize) {
   return Math.max(0.05, HIT_WIDTH + (targetSize - 1) * 0.4 + (shooterSize - 1) * 0.15);
 }
-// distance along a ray (ox,oz)+t(dx,dz) until it leaves the square field of half-size `half`
-function rayExit(ox, oz, dx, dz, half) {
-  let t = 40;
-  if (dx > 1e-6) t = Math.min(t, (half - ox) / dx);
-  else if (dx < -1e-6) t = Math.min(t, (-half - ox) / dx);
-  if (dz > 1e-6) t = Math.min(t, (half - oz) / dz);
-  else if (dz < -1e-6) t = Math.min(t, (-half - oz) / dz);
-  return Math.max(0.1, t);
+// distance along a ray (ox,oz)+t(dx,dz) until it leaves the square field of half-size `half`,
+// plus which axis it exits through (so a bounce can reflect off that boundary correctly)
+function rayExitInfo(ox, oz, dx, dz, half) {
+  let t = 40, axis = null;
+  if (dx > 1e-6) { const c = (half - ox) / dx; if (c < t) { t = c; axis = 'x'; } }
+  else if (dx < -1e-6) { const c = (-half - ox) / dx; if (c < t) { t = c; axis = 'x'; } }
+  if (dz > 1e-6) { const c = (half - oz) / dz; if (c < t) { t = c; axis = 'z'; } }
+  else if (dz < -1e-6) { const c = (-half - oz) / dz; if (c < t) { t = c; axis = 'z'; } }
+  return { t: Math.max(0.1, t), axis };
 }
-// a random direction that points generally back toward the island centre (for edge bounces)
-function inwardAngle(x, z) {
-  return Math.atan2(-x, -z) + (Math.random() - 0.5) * Math.PI;
+// mirror a direction vector off a surface with unit normal (nx,nz) — angle-of-incidence bounce
+function reflect(dx, dz, nx, nz) {
+  const dot = dx * nx + dz * nz;
+  return { x: dx - 2 * dot * nx, z: dz - 2 * dot * nz };
 }
 
 // ---- Latent powers (each player picks one at match start, fixed for the match) ----
@@ -240,28 +255,38 @@ class Room {
     }
   }
 
-  setCardTarget(id, targetId) {
-    if (this.state !== 'placing') return;
-    const p = this.players.get(id);
-    const t = this.players.get(targetId);
-    if (!p || !p.alive || p.ready) return;
-    if (!t || !t.alive) return;
-    p.cardTarget = targetId;
-    io.to(id).emit('cardTargetSet', { targetId });
-  }
-
+  // Area-card placement. Cyclone is 2-phase: the first call locks the storm's origin;
+  // every call after that instead re-aims its travel direction (repeatable pre-ready).
   setCardArea(id, x, z) {
     if (this.state !== 'placing') return;
     const p = this.players.get(id);
     if (!p || !p.alive || p.ready || !AREA_CARDS.has(p.card)) return;
     const lim = this.islandSize / 2 - 0.5;
-    p.cardArea = { x: Math.max(-lim, Math.min(lim, x)), z: Math.max(-lim, Math.min(lim, z)) };
+    const cx = Math.max(-lim, Math.min(lim, x)), cz = Math.max(-lim, Math.min(lim, z));
+    if (p.card === 'cyclone' && p.cardArea) {
+      p.cardAngle = Math.atan2(cx - p.cardArea.x, cz - p.cardArea.z);
+      io.to(id).emit('cardAreaSet', { ...p.cardArea, angle: p.cardAngle });
+      return;
+    }
+    p.cardArea = { x: cx, z: cz };
     io.to(id).emit('cardAreaSet', p.cardArea);
   }
 
+  // ต้นไม้ให้ร่ม (wall card): right-click cycles the placed rectangle's rotation 45deg
+  rotateCardArea(id) {
+    if (this.state !== 'placing') return;
+    const p = this.players.get(id);
+    if (!p || !p.alive || p.ready || p.card !== 'wall') return;
+    p.wallRot = ((p.wallRot || 0) + Math.PI / 4) % (Math.PI * 2);
+    io.to(id).emit('cardRotSet', { rot: p.wallRot });
+  }
+
   decideBotMove(bot, half) {
-    bot.x = (Math.random() * 2 - 1) * half;
-    bot.z = (Math.random() * 2 - 1) * half;
+    const z = bot.activeFrozenZone;
+    const minX = z ? Math.max(-half, z.minX) : -half, maxX = z ? Math.min(half, z.maxX) : half;
+    const minZ = z ? Math.max(-half, z.minZ) : -half, maxZ = z ? Math.min(half, z.maxZ) : half;
+    bot.x = minX + Math.random() * (maxX - minX);
+    bot.z = minZ + Math.random() * (maxZ - minZ);
     const towardCenter = Math.atan2(-bot.x, -bot.z);
     if (Math.random() < 0.6) {
       // aim roughly at the middle of the island with some noise, a common human instinct
@@ -295,6 +320,8 @@ class Room {
       p.matrixUsed = false; // The Matrix dodge is a once-per-match trigger
       p.kills = 0;          // eliminations caused this match (for the final scoreboard)
       p.eliminatedRound = null; // round they died (null = still alive / winner)
+      p.frozenZone = null;       // กรงหิมะ: pending freeze for the player's next placement phase
+      p.activeFrozenZone = null; // กรงหิมะ: freeze actively constraining movement this round
       // each player picks one latent power from 3 dealt choices (bots auto-pick)
       p.power = null;
       p.powerChoices = dealPowerChoices();
@@ -359,8 +386,9 @@ class Room {
       p.ready = false;
       p.shotTargetId = null;
       p.card = null;
-      p.cardTarget = null;
       p.cardArea = null;
+      p.cardAngle = null;
+      p.wallRot = 0;
       // deal 3 distinct cards to choose from (area cards weighted to appear less)
       p.cardChoices = dealChoices();
       // bots choose one of their 3 immediately
@@ -411,17 +439,27 @@ class Room {
     for (const p of aliveList) {
       if (!p.card) p.card = p.cardChoices[Math.floor(Math.random() * p.cardChoices.length)]; // auto-pick if idle
       p.ready = false;
+      // กรงหิมะ only constrains the ONE round right after a player gets caught in it
+      p.activeFrozenZone = p.frozenZone || null;
+      p.frozenZone = null;
       if (p.isBot) {
         this.decideBotMove(p, half);
         p.ready = true;
-        if (AREA_CARDS.has(p.card)) {
+        if (p.card === 'cyclone') {
           p.cardArea = { x: (Math.random() * 2 - 1) * half, z: (Math.random() * 2 - 1) * half };
-        } else {
-          p.cardTarget = aliveList[Math.floor(Math.random() * aliveList.length)].id;
+          p.cardAngle = Math.random() * Math.PI * 2;
+        } else if (AREA_CARDS.has(p.card)) {
+          p.cardArea = { x: (Math.random() * 2 - 1) * half, z: (Math.random() * 2 - 1) * half };
         }
       } else {
-        p.x = (Math.random() - 0.5) * 1.5;
-        p.z = (Math.random() - 0.5) * 1.5;
+        const z = p.activeFrozenZone;
+        if (z) {
+          p.x = (z.minX + z.maxX) / 2;
+          p.z = (z.minZ + z.maxZ) / 2;
+        } else {
+          p.x = (Math.random() - 0.5) * 1.5;
+          p.z = (Math.random() - 0.5) * 1.5;
+        }
         p.angle = Math.random() * Math.PI * 2;
       }
     }
@@ -436,7 +474,7 @@ class Room {
       roster
     });
     for (const p of aliveList) {
-      if (!p.isBot) io.to(p.id).emit('yourCard', { card: p.card });
+      if (!p.isBot) io.to(p.id).emit('yourCard', { card: p.card, frozenZone: p.activeFrozenZone || null });
     }
     io.to(this.spectatorRoom).emit('spectateSnapshot', {
       round: this.round,
@@ -458,8 +496,11 @@ class Room {
     const p = this.players.get(id);
     if (!p || !p.alive || this.state !== 'placing' || p.ready) return;
     const half = this.islandSize / 2 - 0.6;
-    p.x = Math.max(-half, Math.min(half, x));
-    p.z = Math.max(-half, Math.min(half, z));
+    const z0 = p.activeFrozenZone;
+    const minX = z0 ? Math.max(-half, z0.minX) : -half, maxX = z0 ? Math.min(half, z0.maxX) : half;
+    const minZ = z0 ? Math.max(-half, z0.minZ) : -half, maxZ = z0 ? Math.min(half, z0.maxZ) : half;
+    p.x = Math.max(minX, Math.min(maxX, x));
+    p.z = Math.max(minZ, Math.min(maxZ, z));
     p.angle = angle;
     io.to(this.spectatorRoom).emit('spectateMove', { id: p.id, x: p.x, z: p.z, angle: p.angle });
   }
@@ -472,40 +513,83 @@ class Room {
     const alive = [...this.players.values()].filter(p => p.alive);
     const aliveMap = new Map(alive.map(p => [p.id, p]));
     const fieldHalf = this.islandSize / 2;
-
-    // 1. resolve every card (auto-assign a random target if the player never picked one)
-    //    and accumulate the per-player effects it produces.
-    const fx = new Map(); // id -> { size, fork, bounce, thunder, mirror }
-    for (const p of alive) fx.set(p.id, { size: 1, fork: false, bounce: false, thunder: false, mirror: false });
-    const cards = []; // player-target cards (for the reveal display)
-    const obstacles = []; // area cards placed on the field
     const areaLim = fieldHalf - 0.5;
+
+    // resolve an area card's placed position, falling back to a random spot if never placed
+    const resolveArea = caster => {
+      let a = caster.cardArea;
+      if (!a) a = { x: (Math.random() * 2 - 1) * areaLim, z: (Math.random() * 2 - 1) * areaLim };
+      a = { x: Math.max(-areaLim, Math.min(areaLim, a.x)), z: Math.max(-areaLim, Math.min(areaLim, a.z)) };
+      caster.cardArea = a;
+      return a;
+    };
+
+    // 1. ไซโคลน pre-pass — the storm sweeps BEFORE anything else, since it changes the
+    //    real positions combat will use for the rest of the round.
+    const cyclones = [];
     for (const caster of alive) {
-      // area cards drop an obstacle on the field instead of hitting a player
-      if (AREA_CARDS.has(caster.card)) {
-        let a = caster.cardArea;
-        if (!a) a = { x: (Math.random() * 2 - 1) * areaLim, z: (Math.random() * 2 - 1) * areaLim };
-        a = { x: Math.max(-areaLim, Math.min(areaLim, a.x)), z: Math.max(-areaLim, Math.min(areaLim, a.z)) };
-        caster.cardArea = a;
-        obstacles.push(makeObstacle(obstacles.length, caster.card, a.x, a.z));
+      if (caster.card !== 'cyclone') continue;
+      const origin = resolveArea(caster);
+      const angle = caster.cardAngle != null ? caster.cardAngle : Math.random() * Math.PI * 2;
+      caster.cardAngle = angle;
+      const dx = Math.sin(angle), dz = Math.cos(angle);
+      const pulls = [];
+      for (const t of alive) {
+        const vx = t.x - origin.x, vz = t.z - origin.z;
+        const along = vx * dx + vz * dz;
+        if (along < 0 || along > CYCLONE_TRAVEL) continue;
+        const perp = Math.abs(vx * dz - vz * dx);
+        if (perp > CYCLONE_HALF_WIDTH) continue;
+        const fromX = t.x, fromZ = t.z;
+        const toX = Math.max(-fieldHalf, Math.min(fieldHalf, t.x + dx * CYCLONE_PULL));
+        const toZ = Math.max(-fieldHalf, Math.min(fieldHalf, t.z + dz * CYCLONE_PULL));
+        t.x = toX; t.z = toZ;
+        pulls.push({ id: t.id, fromX, fromZ, toX, toZ });
+      }
+      cyclones.push({ casterId: caster.id, x: origin.x, z: origin.z, angle, pulls });
+    }
+
+    // 2. resolve every other card. Non-area cards always apply to the caster themselves.
+    const fx = new Map(); // id -> { size, mirror } (queried by arbitrary id elsewhere, so kept as a map)
+    for (const p of alive) fx.set(p.id, { size: 1, mirror: false });
+    const cards = []; // every card cast this round (for the reveal card-log panel)
+    const obstacles = []; // bullet-interactive area cards (wall / firework)
+    const icecages = []; // กรงหิมะ zones (not bullet-interactive — freezes movement instead)
+    for (const caster of alive) {
+      cards.push({ casterId: caster.id, card: caster.card, targetId: caster.id });
+      if (caster.card === 'cyclone') continue; // already resolved in the pre-pass above
+      if (caster.card === 'wall' || caster.card === 'firework') {
+        const a = resolveArea(caster);
+        obstacles.push(makeObstacle(obstacles.length, caster.card, a.x, a.z, { rot: caster.wallRot || 0 }));
         continue;
       }
-      let targetId = caster.cardTarget;
-      if (!targetId || !aliveMap.has(targetId)) {
-        targetId = alive[Math.floor(Math.random() * alive.length)].id;
+      if (caster.card === 'icecage') {
+        const a = resolveArea(caster);
+        const caughtIds = [];
+        for (const t of alive) {
+          if (Math.abs(t.x - a.x) <= ICECAGE_HALF && Math.abs(t.z - a.z) <= ICECAGE_HALF) {
+            t.frozenZone = {
+              minX: a.x - ICECAGE_HALF, maxX: a.x + ICECAGE_HALF,
+              minZ: a.z - ICECAGE_HALF, maxZ: a.z + ICECAGE_HALF
+            };
+            caughtIds.push(t.id);
+          }
+        }
+        icecages.push({ casterId: caster.id, x: a.x, z: a.z, caughtIds });
+        continue;
       }
-      caster.cardTarget = targetId;
-      const e = fx.get(targetId);
+      if (caster.card === 'thunder') {
+        resolveArea(caster); // strike itself happens on the caster's own firing-order turn
+        continue;
+      }
+      // self-buff cards
+      const e = fx.get(caster.id);
       switch (caster.card) {
-        // size cards stack (multiply) when several are cast on the same target
         case 'gobig': e.size *= goBigScale(); break;
         case 'gosmall': e.size *= goSmallScale(); break;
-        case 'divine': e.fork = true; break;
-        case 'bounce': e.bounce = true; break;
-        case 'thunder': e.thunder = true; break;
         case 'mirror': e.mirror = true; break;
+        // divine / bounce need no fx flag — checked directly via caster.card when they fire
       }
-      cards.push({ casterId: caster.id, card: caster.card, targetId });
     }
 
     const firingOrder = shuffle(alive);
@@ -516,7 +600,7 @@ class Room {
     // after a Mirror reflection so the shot can fly back into the original shooter.
     // The Matrix lets its owner dodge the first hit of the match (bullet floats past to whoever's
     // behind) — but a Mirror card on that target overrides the dodge (card beats power).
-    const castSegment = (ox, oz, ang, shooter, selfId, excludeIds, excludeObs, dodgeOut) => {
+    const castSegment = (ox, oz, ang, shooter, selfId, excludeIds, excludeObs, dodgeOut, maxRange) => {
       const dx = Math.sin(ang), dz = Math.cos(ang);
       const cands = [];
       for (const t of alive) {
@@ -528,12 +612,15 @@ class Room {
         if (perp <= effHitWidth(fx.get(shooter.id).size, fx.get(t.id).size)) cands.push({ t, fwd });
       }
       cands.sort((a, b) => a.fwd - b.fwd);
-      const exitDist = rayExit(ox, oz, dx, dz, fieldHalf);
+      const exitInfo = rayExitInfo(ox, oz, dx, dz, fieldHalf);
+      const exitDist = Math.min(exitInfo.t, maxRange != null ? maxRange : Infinity);
       // nearest area-card obstacle along the ray
       let obs = null, obsT = Infinity;
       for (const o of obstacles) {
         if (excludeObs.has(o.i)) continue;
-        const t = rayAABB(ox, oz, dx, dz, o.minX, o.maxX, o.minZ, o.maxZ);
+        const t = o.type === 'wall'
+          ? rayOBB(ox, oz, dx, dz, o.x, o.z, o.halfLen, o.halfWid, o.rot)
+          : rayAABB(ox, oz, dx, dz, o.minX, o.maxX, o.minZ, o.maxZ);
         if (t != null && t > 0.02 && t < obsT) { obsT = t; obs = o; }
       }
       const obsPoint = () => ({ type: obs.type, obs, x: ox + dx * obsT, z: oz + dz * obsT, exited: false });
@@ -550,26 +637,21 @@ class Room {
       }
       if (obs && obsT < exitDist) return obsPoint();
       const d = Math.min(exitDist, 40);
-      return { type: 'miss', hitId: null, x: ox + dx * d, z: oz + dz * d, exited: exitDist < 40 };
+      return { type: 'miss', hitId: null, x: ox + dx * d, z: oz + dz * d, exited: exitInfo.t < 40 && exitDist >= exitInfo.t, exitAxis: exitInfo.axis };
     };
 
     // resolve one bullet (bounces / MAN ricochets / Mirror reflections / area obstacles), collecting kills + events
-    const fireBullet = (shooter, a0, bounces, kills, ev) => {
+    const fireBullet = (shooter, a0, bounces, kills, ev, maxRange) => {
       const segments = [];
       const touched = new Set(kills); // never interact with the same player twice on one bullet
       const touchedObs = new Set();
       let ox = shooter.x, oz = shooter.z, ang = a0, bouncesLeft = bounces, selfId = shooter.id;
       for (let step = 0; step < 8; step++) {
-        const r = castSegment(ox, oz, ang, shooter, selfId, touched, touchedObs, ev.dodges);
+        const r = castSegment(ox, oz, ang, shooter, selfId, touched, touchedObs, ev.dodges, maxRange);
         const seg = { x1: ox, z1: oz, x2: r.x, z2: r.z, hitId: null };
         segments.push(seg);
-        if (r.type === 'wall') { seg.wall = true; break; } // กำแพงกันดิน blocks the shot
-        if (r.type === 'cyclone') { // ลมหมุน whirls the shot off in a random direction
-          seg.cyclone = true; touchedObs.add(r.obs.i);
-          ox = r.x; oz = r.z; ang = Math.random() * Math.PI * 2;
-          continue;
-        }
-        if (r.type === 'firework') { // พลุไฟ blows up, killing everyone in a 3x3 block
+        if (r.type === 'wall') { seg.wall = true; break; } // ต้นไม้ให้ร่ม blocks the shot
+        if (r.type === 'firework') { // ปอมเปอี blows up, killing everyone in a 3x3 block
           seg.firework = true; touchedObs.add(r.obs.i);
           const victims = [];
           for (const t of alive) {
@@ -603,11 +685,28 @@ class Room {
           seg.hitId = r.hitId;
           kills.add(r.hitId);
           touched.add(r.hitId);
-          if (bouncesLeft > 0) { bouncesLeft--; ox = r.x; oz = r.z; ang = Math.random() * Math.PI * 2; continue; }
+          // The Bounce: reflect off the victim's own facing direction (angle of incidence)
+          if (bouncesLeft > 0) {
+            bouncesLeft--;
+            const dx0 = Math.sin(ang), dz0 = Math.cos(ang);
+            const nx = Math.sin(victim.angle), nz = Math.cos(victim.angle);
+            const rf = reflect(dx0, dz0, nx, nz);
+            ang = Math.atan2(rf.x, rf.z);
+            ox = r.x; oz = r.z;
+            continue;
+          }
           break;
         }
-        // miss / left the field
-        if (r.exited && bouncesLeft > 0) { bouncesLeft--; ox = r.x; oz = r.z; ang = inwardAngle(r.x, r.z); continue; }
+        // miss / left the field — The Bounce reflects off whichever edge was crossed
+        if (r.exited && bouncesLeft > 0) {
+          bouncesLeft--;
+          const dx0 = Math.sin(ang), dz0 = Math.cos(ang);
+          const nx = r.exitAxis === 'x' ? 1 : 0, nz = r.exitAxis === 'z' ? 1 : 0;
+          const rf = reflect(dx0, dz0, nx, nz);
+          ang = Math.atan2(rf.x, rf.z);
+          ox = r.x; oz = r.z;
+          continue;
+        }
         break;
       }
       return segments;
@@ -618,21 +717,17 @@ class Room {
         shots.push({ shooterId: shooter.id, type: 'skip', skipped: true, hitIds: [] });
         continue;
       }
-      const e = fx.get(shooter.id);
 
-      // The Thunder replaces the normal directional shot
-      if (e.thunder) {
-        if (Math.random() < 0.5) {
-          shots.push({ shooterId: shooter.id, type: 'thunder', jammed: true, hitIds: [] });
-        } else {
-          const victims = [];
-          for (const t of alive) {
-            if (t.id === shooter.id || !stillAlive.has(t.id)) continue;
-            if (Math.hypot(t.x - shooter.x, t.z - shooter.z) <= THUNDER_RADIUS) victims.push(t.id);
-          }
-          victims.forEach(id => stillAlive.delete(id));
-          shots.push({ shooterId: shooter.id, type: 'thunder', jammed: false, hitIds: victims });
+      // ใครปักตะไคร้: strikes the caster's chosen area instead of firing a directional shot
+      if (shooter.card === 'thunder') {
+        const a = shooter.cardArea || { x: shooter.x, z: shooter.z };
+        const victims = [];
+        for (const t of alive) {
+          if (!stillAlive.has(t.id)) continue;
+          if (Math.abs(t.x - a.x) <= THUNDER_STRIKE_HALF && Math.abs(t.z - a.z) <= THUNDER_STRIKE_HALF) victims.push(t.id);
         }
+        victims.forEach(id => stillAlive.delete(id));
+        shots.push({ shooterId: shooter.id, type: 'thunder', jammed: false, x: a.x, z: a.z, hitIds: victims });
         continue;
       }
 
@@ -640,11 +735,18 @@ class Room {
       let baseAngle = shooter.angle, drunken = false;
       if (shooter.power === 'drunken' && Math.random() < 1 / 3) { baseAngle += Math.PI; drunken = true; }
 
-      // one or two bullets (The Divine forks into two), each able to bounce once (The Bounce)
-      const angles = e.fork ? [baseAngle - FORK_ANGLE, baseAngle + FORK_ANGLE] : [baseAngle];
       const kills = new Set();
       const ev = { dodges: [], man: [], mirror: [] };
-      const bullets = angles.map(a0 => ({ segments: fireBullet(shooter, a0, e.bounce ? 1 : 0, kills, ev) }));
+      let bullets;
+      if (shooter.card === 'divine') {
+        // ลูกซองแฉก: 4 simultaneous bullets at +-30/+-60deg, capped to half the field diagonal
+        const maxRange = fieldHalf * Math.SQRT2;
+        const offsets = [-DIVINE_ANGLE_A, DIVINE_ANGLE_A, -DIVINE_ANGLE_B, DIVINE_ANGLE_B];
+        bullets = offsets.map(o => ({ segments: fireBullet(shooter, baseAngle + o, 0, kills, ev, maxRange) }));
+      } else {
+        const bounces = shooter.card === 'bounce' ? 2 : 0;
+        bullets = [{ segments: fireBullet(shooter, baseAngle, bounces, kills, ev) }];
+      }
       kills.forEach(id => stillAlive.delete(id));
       shots.push({
         shooterId: shooter.id, type: 'shot', bullets, hitIds: [...kills],
@@ -694,11 +796,15 @@ class Room {
           alive: p.alive,
           wasHit: eliminated.includes(p.id),
           size: (fx.get(p.id) || {}).size || 1,
-          card: p.card, cardTargetId: p.cardTarget
+          card: p.card
         })),
       shots,
       cards,
-      obstacles: obstacles.map(o => ({ type: o.type, x: o.x, z: o.z, minX: o.minX, maxX: o.maxX, minZ: o.minZ, maxZ: o.maxZ, longZ: o.longZ })),
+      obstacles: obstacles.map(o => o.type === 'wall'
+        ? { type: o.type, x: o.x, z: o.z, rot: o.rot, halfLen: o.halfLen, halfWid: o.halfWid }
+        : { type: o.type, x: o.x, z: o.z, minX: o.minX, maxX: o.maxX, minZ: o.minZ, maxZ: o.maxZ }),
+      cyclones,
+      icecages,
       eliminated,
       survivors: this.aliveIds()
     };
@@ -850,16 +956,16 @@ io.on('connection', socket => {
     room.pickCard(socket.id, card);
   });
 
-  socket.on('useCard', ({ targetId }) => {
-    const room = rooms.get(currentRoomCode);
-    if (!room) return;
-    room.setCardTarget(socket.id, targetId);
-  });
-
   socket.on('useCardArea', ({ x, z }) => {
     const room = rooms.get(currentRoomCode);
     if (!room) return;
     room.setCardArea(socket.id, x, z);
+  });
+
+  socket.on('rotateCardArea', () => {
+    const room = rooms.get(currentRoomCode);
+    if (!room) return;
+    room.rotateCardArea(socket.id);
   });
 
   socket.on('playAgain', () => {
