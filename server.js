@@ -130,7 +130,10 @@ const SHOT_INTERVAL = 1300; // gap between each player's turn to fire
 const SHOT_END_PAUSE = 800; // pause after the last shot before advancing
 const POWER_PAUSE = 1900; // extra gap after a shot that triggered a power/mirror zoom (let it finish)
 const CYCLONE_INTRO_DURATION_C = 1500; // mirrors client CYCLONE_INTRO_DURATION
-const CAMERA_SETTLE_SLACK = 1500; // extra buffer since effects now wait for the reveal camera to settle
+// extra buffer since the client now waits for the camera to settle AND for a shot's bullets
+// to fully finish travelling before the next one fires — both can add real time beyond the
+// naive per-shot formula below, especially on a large island with slow-travelling bullets
+const CAMERA_SETTLE_SLACK = 4000;
 // a shot that pulls the camera in on a hidden power (or mirror) — the reveal waits for it
 function shotHasZoom(s) {
   return !!(s.drunken || s.revenge || (s.dodges && s.dodges.length) ||
@@ -440,13 +443,14 @@ class Room {
 
   // นักสะสม: bank the card just picked instead of using it this round — it carries into next
   // round alongside whatever gets dealt then. Only one card can be held in the bank at a time.
+  // นักสะสม: bank the card during placement (before readying up) instead of using it this
+  // round — it carries into next round alongside whatever gets dealt then.
   bankCard(id) {
-    if (this.state !== 'cardpick') return;
+    if (this.state !== 'placing') return;
     const p = this.players.get(id);
-    if (!p || !p.alive || p.power !== 'collector' || p.bankedCard || !p.card) return;
+    if (!p || !p.alive || p.ready || p.power !== 'collector' || p.bankedCard || !p.card) return;
     p.cardBanked = true;
     io.to(id).emit('cardBanked', { card: p.card });
-    this.maybeBeginPlacement();
   }
 
   maybeBeginPlacement() {

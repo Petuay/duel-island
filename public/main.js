@@ -1755,6 +1755,7 @@ function updateReadyUI() {
   if (selfMesh && selfMesh.userData.ring) {
     selfMesh.userData.ring.material.color.set(selfReady ? 0x6dff8a : 0xffffff);
   }
+  updateBankButton();
 }
 window.addEventListener('mousemove', e => {
   mouseNdc.x = (e.clientX / window.innerWidth) * 2 - 1;
@@ -1898,6 +1899,7 @@ socket.on('roundStart', data => {
   myCardBankedThisRound = false;
   myFrozenZone = null;
   updateFrozenZoneMarker();
+  updateBankButton();
   clearAreaMarker();
   clearCycloneGhost();
   clearObstacles();
@@ -1933,21 +1935,15 @@ socket.on('yourChoices', data => {
   buildChoiceOverlay(data.choices || []);
 });
 
-socket.on('cardPicked', data => { myCard = data.card; updateBankButton(); });
-socket.on('cardBanked', () => { updateBankButton(true); });
-
-function updateBankButton(bankedNow) {
-  const btn = $('bankCardBtn');
-  if (bankedNow) {
-    btn.textContent = '✅ เก็บไว้แล้ว ตานี้จะไม่ใช้การ์ด';
-    btn.disabled = true;
-    return;
-  }
-  const canBank = myPower === 'collector' && !myBankedCard && !!myCard;
-  btn.classList.toggle('hidden', !canBank);
-  btn.disabled = false;
-  btn.textContent = '🎒 เก็บการ์ดนี้ไว้ใช้ตาหน้า';
-}
+socket.on('cardPicked', data => { myCard = data.card; });
+// นักสะสม: server confirmed the bank — lock in the inert state for this round
+socket.on('cardBanked', () => {
+  myCardBankedThisRound = true;
+  clearAreaMarker();
+  clearCycloneGhost();
+  updateCardHeader();
+  updateBankButton();
+});
 
 function buildChoiceOverlay(choices) {
   $('choiceTitle').textContent = '🃏 เลือกการ์ด 1 ใบ'
@@ -1968,16 +1964,30 @@ function buildChoiceOverlay(choices) {
       socket.emit('pickCard', { card: cid });
       [...el.children].forEach(ch => ch.classList.remove('chosen'));
       div.classList.add('chosen');
-      updateBankButton();
     });
     el.appendChild(div);
   });
-  updateBankButton();
   $('choiceOverlay').classList.remove('hidden');
 }
 
+// นักสะสม: the bank button lives in the placement-phase panel now (not the card-choice
+// overlay), since the user found it more natural to decide while standing/aiming.
+function updateBankButton() {
+  const btn = $('bankCardBtn');
+  if (myCardBankedThisRound) {
+    btn.classList.remove('hidden');
+    btn.textContent = '✅ เก็บไว้แล้ว ตานี้จะไม่ใช้การ์ด';
+    btn.disabled = true;
+    return;
+  }
+  const canBank = placing && !selfReady && myPower === 'collector' && !myBankedCard && !!myCard;
+  btn.classList.toggle('hidden', !canBank);
+  btn.disabled = false;
+  btn.textContent = '🎒 เก็บการ์ดนี้ไว้ใช้ตาหน้า';
+}
+
 $('bankCardBtn').addEventListener('click', () => {
-  if (phase !== 'cardpick' || !myCard || myBankedCard) return;
+  if (!placing || selfReady || myCardBankedThisRound || myBankedCard || !myCard) return;
   socket.emit('bankCard');
 });
 
@@ -2073,7 +2083,7 @@ function dropEyeFootprint(i, x, z) {
   if (last && Math.hypot(x - last.x, z - last.z) < EYE_DROP_DIST) return;
   eyeLastDrop[i] = { x, z };
   const decal = new THREE.Mesh(new THREE.CircleGeometry(0.16, 12),
-    new THREE.MeshBasicMaterial({ color: 0xd8d8d8, transparent: true, opacity: 0.55, depthWrite: false }));
+    new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.65, depthWrite: false }));
   decal.rotation.x = -Math.PI / 2;
   decal.position.set(x, 0.02, z);
   scene.add(decal);
@@ -2239,6 +2249,7 @@ function buildCardPicker() {
   note.innerHTML = `<span class="orderName" style="text-align:center">${noteText}</span>`;
   listEl.appendChild(note);
   $('orderPanel').classList.remove('hidden');
+  updateBankButton();
   showCardInstructionBanner();
 }
 
@@ -2298,6 +2309,7 @@ function buildOrderTable(data) {
   clearInterval(orderShuffleTimer);
   $('orderPanelTitle').textContent = '🎲 ลำดับการยิง';
   $('cardHeader').classList.add('hidden');
+  $('bankCardBtn').classList.add('hidden');
 
   const trueOrder = data.shots.map(s => s.shooterId); // firing order = shot order
   data.shots.forEach(s => {
@@ -2513,7 +2525,8 @@ function updateReveal(dt) {
   if (camera.position.distanceTo(camTarget) < CAMERA_SETTLE_EPS) revealClock += dt * 1000;
 
   revealShots.forEach(s => {
-    if (s.triggered || revealClock < s.fireTime) return;
+    // don't let the next shot start while an earlier one's bullets are still travelling
+    if (s.triggered || revealClock < s.fireTime || fxBullets.length > 0) return;
     s.triggered = true;
     revealOrderRow(s);
     triggerShot(s);
