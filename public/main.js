@@ -460,8 +460,8 @@ const PAINTED = {
   cloudRing: { tex: loadTex('cloudch.webp') } // ink-cloud border, alpha-masked (transparent centre + gate/stair gaps)
 };
 
-// Soft sky-blue background to sit behind the ink clouds and echo the cyan crystals.
-scene.background = new THREE.Color(0xa8c6da);
+// Black background behind the ink clouds.
+scene.background = new THREE.Color(0x000000);
 
 // small stylized decorations that cling to the island rim (pure scenery)
 function makePineTree(x, z) {
