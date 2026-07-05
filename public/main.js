@@ -21,8 +21,10 @@ const CHARACTERS = [
   { id: 'buu', name: 'บูบู้', icon: '👦' },
   { id: 'guanyin', name: 'กวนอิม', icon: '🌸' },
   { id: 'khanthi', name: 'คานที', icon: '🚀' },
-  { id: 'hanuman', name: 'หนุมาน', icon: '🐒' }
+  { id: 'hanuman', name: 'หนุมาน', icon: '🐒' },
+  { id: 'lekroyal', name: 'เล็ก รอยัล', icon: '💍' }
 ];
+const SILHOUETTE_PREVIEW_CHARS = new Set(['lekroyal']); // these render as a flat black silhouette in the lobby preview only (in-game model is unaffected)
 const BOT_CHAR_ID = 'bot'; // reserved model for bot players only — not in CHARACTERS, so it never shows in the picker
 const charTemplates = {};    // id -> { scene, animations }
 const charMixers = [];       // { mixer, mesh } — updated each frame, pruned when the mesh leaves the scene
@@ -142,6 +144,10 @@ function setPreviewCharacter(charId) {
   if (previewModel) { previewScene.remove(previewModel); previewModel = null; }
   previewMixer = null;
   const model = skeletonClone(tpl.scene);
+  if (SILHOUETTE_PREVIEW_CHARS.has(charId)) {
+    const silhouetteMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    model.traverse(o => { if (o.isMesh) o.material = silhouetteMat; });
+  }
   const box = new THREE.Box3().setFromObject(model);
   const size = new THREE.Vector3(), center = new THREE.Vector3();
   box.getSize(size); box.getCenter(center);

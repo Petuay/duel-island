@@ -90,7 +90,7 @@ function hitFromBehind(bulletAng, faceAng) {
   return Math.sin(bulletAng) * Math.sin(faceAng) + Math.cos(bulletAng) * Math.cos(faceAng) > 0.15;
 }
 
-const CHAR_IDS = ['buddha', 'jesus', 'kongming', 'buu', 'guanyin', 'khanthi', 'hanuman']; // selectable character models
+const CHAR_IDS = ['buddha', 'jesus', 'kongming', 'buu', 'guanyin', 'khanthi', 'hanuman', 'lekroyal']; // selectable character models
 const BOT_CHAR_ID = 'bot'; // reserved model, only ever used for bot players (not player-selectable)
 
 // sequential fire animation timing (mirrored client-side in main.js)
