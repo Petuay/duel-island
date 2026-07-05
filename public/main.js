@@ -456,7 +456,8 @@ function loadTex(name) {
   return t;
 }
 const PAINTED = {
-  floor: { tex: loadTex('floor.webp') }
+  floor: { tex: loadTex('floor.webp') },
+  cloudRing: { tex: loadTex('cloudch.webp') } // ink-cloud border, alpha-masked (transparent centre + gate/stair gaps)
 };
 
 // Flat pale background, matching the reference art.
@@ -815,6 +816,11 @@ function rimPoint(t, half, inset = 0.6) {
   return [-r, u];
 }
 
+// cloud-ring plane size relative to island size. The texture's clouds turn opaque
+// at ~0.35 of its width from centre, so 1.7 lands the cloud band just outside the
+// wall (~0.6·n) and lets it billow outward to ~0.85·n into the void beyond.
+const CLOUD_RING_SCALE = 1.7;
+
 function buildIsland(size) {
   scene.remove(islandGroup);
   islandGroup = new THREE.Group();
@@ -837,6 +843,23 @@ function buildIsland(size) {
   addBorderFrame(islandGroup, n);
   islandGroup.add(cornerDecorGroup);
   addCornerDecor(n);
+
+  // Painted ink-cloud ring as a flat layer beneath the island rim — its alpha
+  // mask leaves the centre (arena) and the gate/stair gaps clear, so only the
+  // swirling clouds peek out around the map edges (matching the reference art).
+  const cloudSize = n * CLOUD_RING_SCALE;
+  const cloudMat = new THREE.MeshBasicMaterial({
+    map: PAINTED.cloudRing.tex,
+    transparent: true,
+    depthWrite: false,
+    opacity: 0.96,
+    side: THREE.DoubleSide
+  });
+  const cloudRing = new THREE.Mesh(new THREE.PlaneGeometry(cloudSize, cloudSize), cloudMat);
+  cloudRing.rotation.x = -Math.PI / 2;
+  cloudRing.position.y = -0.14; // sits just below the arena top so it reads as a lower layer
+  cloudRing.renderOrder = 0;    // draw before the island base
+  islandGroup.add(cloudRing);
 
   scene.add(islandGroup);
   return n;
