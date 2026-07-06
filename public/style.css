@@ -224,8 +224,8 @@ button.secondary:active { box-shadow: 0 2px 0 #d9902a; }
   color: #2f6fb0; font-size: 16px; max-width: 480px;
 }
 #hud .scapegoatBanner {
-  top: 50%; transform: translate(-50%, -50%);
-  color: #8a5cf0; font-size: 26px;
+  top: 92px; transform: translateX(-50%);
+  color: #8a5cf0; font-size: 22px;
   background: rgba(255,255,255,0.96); border-color: #d8c6ff;
   box-shadow: 0 12px 30px rgba(120,80,220,0.35);
 }
