@@ -16,7 +16,10 @@ const CARD_PICK_DURATION = 10000; // ms to choose 1 of 3 dealt cards
 const PLACE_DURATION = 20000; // ms to walk, aim & aim the chosen card
 const NEXT_ROUND_DELAY = 3000; // pause after reveal before next round starts
 const HIT_WIDTH = 0.3; // base perpendicular tolerance of a shot
-const MIN_ISLAND_SIZE = 6;
+const MIN_ISLAND_SIZE = 2;
+// area cards need real placement room — once the island has shrunk down to the minimum,
+// stop dealing them entirely (self-buff cards only)
+const TINY_ISLAND_SIZE = MIN_ISLAND_SIZE;
 const SHRINK_FACTOR = 0.8;
 
 // ---- Special cards (dealt one per player each round) ----
@@ -421,7 +424,8 @@ class Room {
       // one area card is ever active between the banked one and the fresh one — and its
       // placement (position/rotation) is preserved across the round instead of being wiped,
       // since this round's placement UI is driven by that banked card, not the fresh pick.
-      const excludeArea = p.power === 'collector' && p.bankedCard && AREA_CARDS.has(p.bankedCard);
+      const excludeArea = this.islandSize <= TINY_ISLAND_SIZE ||
+        (p.power === 'collector' && p.bankedCard && AREA_CARDS.has(p.bankedCard));
       if (!excludeArea) { p.cardArea = null; p.cardAngle = null; p.wallRot = 0; }
       p.cardChoices = dealChoices(excludeArea);
       // bots choose one of their 3 immediately

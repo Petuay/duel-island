@@ -1429,8 +1429,7 @@ function spawnSegmentBullet(color, segments, radius) {
   fxBullets.push({
     mesh, glow, pts, cum, hitAt, explodeAt, mirrorAt, grazeAt,
     scapegoat, scapegoatDist, scapegoatDone: false, frozen: false,
-    total: cum[cum.length - 1], dist: 0, nextIdx: 1, shieldMesh: null,
-    hasHit: hitAt.some(h => h) // this bullet will actually strike someone — camera chases it in updateReveal
+    total: cum[cum.length - 1], dist: 0, nextIdx: 1, shieldMesh: null
   });
 }
 
@@ -2619,17 +2618,9 @@ function updateReveal(dt) {
     return;
   }
 
-  // pull the camera in on a player whose hidden power is firing, else the wide overview —
-  // but a bullet that's actually about to strike someone takes priority: chase it in flight
-  const chaseBullet = fxBullets.find(b => b.hasHit);
+  // pull the camera in on a player whose hidden power is firing, else the wide overview
   let camTarget;
-  if (chaseBullet) {
-    const bp = chaseBullet.mesh.position;
-    zoomCamPos.set(bp.x, 4.2, bp.z + 3.5);
-    camTarget = zoomCamPos;
-    camera.position.lerp(camTarget, 0.18);
-    camera.lookAt(bp.x, 0.5, bp.z);
-  } else if (zoomFocus && revealClock < zoomFocus.until) {
+  if (zoomFocus && revealClock < zoomFocus.until) {
     zoomCamPos.set(zoomFocus.x, 5.5, zoomFocus.z + 5);
     camTarget = zoomCamPos;
     camera.position.lerp(camTarget, 0.09);
