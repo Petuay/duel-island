@@ -2701,8 +2701,13 @@ function animate() {
     if (!charMixers[i].mesh.parent) charMixers.splice(i, 1);
     else charMixers[i].mixer.update(dt);
   }
-  if (composer) composer.render();
-  else renderer.render(scene, camera);
+  // skip the full main-scene render (shadows + post-processing) while its canvas is hidden behind
+  // the home/lobby/gameover screens — was rendering every frame for nothing, competing for the
+  // same GPU/main-thread time as the lobby's own preview panel and hurting its smoothness
+  if (!canvas.classList.contains('hidden')) {
+    if (composer) composer.render();
+    else renderer.render(scene, camera);
+  }
 
   if (!lobbyScreen.classList.contains('hidden')) {
     if (previewModel) previewModel.rotation.y += dt * 0.8;
