@@ -1278,7 +1278,7 @@ const POWER_DESC = {
   drunken: 'เมาดิบ — 25% ยิงออกเป็นลูกซองแฉก 4 นัดแทน',
   revenger: 'จิตพยาบาท — ตายแล้วยิงสุ่ม 3 นัด',
   man: 'แผ่นหลังลูกผู้ชาย — โดนยิงด้านหลังสะท้อนกลับตามมุมตกกระทบ',
-  clairvoyant: 'เนตรทิพย์ — ตอนเตรียมตัว เห็นรอยเท้าคู่ต่อสู้สุ่ม 1 คน (มีรอยเท้าหลอกอีก 2 รอย)',
+  clairvoyant: 'เนตรทิพย์ — ตอนเตรียมตัว เห็นรอยเท้าคู่ต่อสู้สุ่ม 1 คน (มีรอยเท้าหลอกอีก 1 รอย)',
   collector: 'นักสะสม — เก็บการ์ดที่เลือกไว้ใช้ตาถัดไปได้ 1 ใบ'
 };
 // card ids and short blurbs for the in-game reference sheet
@@ -2063,23 +2063,23 @@ function updateFrozenZoneMarker() {
 }
 
 // ---------- เนตรทิพย์ (clairvoyant) footprint trail ----------
-// server only ever tells us an anonymous {x,z}; the 2 decoys wander off in their own random
-// directions each step (not the real target's delta) so movement pattern can't out them either
+// server only ever tells us an anonymous {x,z}; the decoy wanders off in its own random
+// direction each step (not the real target's delta) so movement pattern can't out it either
 let eyeReal = null;
 let eyeDecoys = [];
-let eyeLastDrop = [null, null, null];
-let eyeTrails = [[], [], []]; // decal meshes per trail, oldest-first, capped at EYE_TRAIL_MAX
-let eyeStepCount = [0, 0, 0]; // for alternating left/right foot offset
+let eyeLastDrop = [null, null];
+let eyeTrails = [[], []]; // decal meshes per trail, oldest-first, capped at EYE_TRAIL_MAX
+let eyeStepCount = [0, 0]; // for alternating left/right foot offset
 const EYE_DROP_DIST = 0.45;
 const EYE_TRAIL_MAX = 3;
 
 function clearEyeTrail() {
   eyeTrails.forEach(trail => trail.forEach(g => scene.remove(g)));
-  eyeTrails = [[], [], []];
-  eyeStepCount = [0, 0, 0];
+  eyeTrails = [[], []];
+  eyeStepCount = [0, 0];
   eyeReal = null;
   eyeDecoys = [];
-  eyeLastDrop = [null, null, null];
+  eyeLastDrop = [null, null];
 }
 
 function makeFootprintShape() {
@@ -2118,7 +2118,7 @@ socket.on('eyeFootprint', data => {
   const b = bounds || 8;
   if (!eyeReal) {
     eyeReal = { x: data.x, z: data.z, angle: 0 };
-    eyeDecoys = [0, 1].map(() => ({
+    eyeDecoys = [0].map(() => ({
       x: (Math.random() * 2 - 1) * b * 0.7,
       z: (Math.random() * 2 - 1) * b * 0.7,
       angle: Math.random() * Math.PI * 2,
