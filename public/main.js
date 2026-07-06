@@ -2062,46 +2062,80 @@ function updateFrozenZoneMarker() {
 }
 
 // ---------- เนตรทิพย์ (clairvoyant) footprint trail ----------
-// server only ever tells us an anonymous {x,z} — 2 decoys move in lockstep with the real one so
-// which of the 3 trails is the actual target is never revealed, just their pattern of movement
+// server only ever tells us an anonymous {x,z}; the 2 decoys wander off in their own random
+// directions each step (not the real target's delta) so movement pattern can't out them either
 let eyeReal = null;
 let eyeDecoys = [];
 let eyeLastDrop = [null, null, null];
-let eyeDecals = [];
+let eyeTrails = [[], [], []]; // decal meshes per trail, oldest-first, capped at EYE_TRAIL_MAX
+let eyeStepCount = [0, 0, 0]; // for alternating left/right foot offset
 const EYE_DROP_DIST = 0.45;
+const EYE_TRAIL_MAX = 3;
 
 function clearEyeTrail() {
-  eyeDecals.forEach(d => scene.remove(d));
-  eyeDecals = [];
+  eyeTrails.forEach(trail => trail.forEach(g => scene.remove(g)));
+  eyeTrails = [[], [], []];
+  eyeStepCount = [0, 0, 0];
   eyeReal = null;
   eyeDecoys = [];
   eyeLastDrop = [null, null, null];
 }
 
-function dropEyeFootprint(i, x, z) {
+function makeFootprintShape() {
+  const s = new THREE.Shape();
+  s.moveTo(0, -0.16);
+  s.quadraticCurveTo(0.09, -0.15, 0.095, -0.02);
+  s.quadraticCurveTo(0.1, 0.08, 0.06, 0.15);
+  s.quadraticCurveTo(0.03, 0.19, 0, 0.18);
+  s.quadraticCurveTo(-0.03, 0.19, -0.06, 0.15);
+  s.quadraticCurveTo(-0.1, 0.08, -0.095, -0.02);
+  s.quadraticCurveTo(-0.09, -0.15, 0, -0.16);
+  return new THREE.ShapeGeometry(s);
+}
+const EYE_FOOT_GEOM = makeFootprintShape();
+
+function dropEyeFootprint(i, x, z, heading) {
   const last = eyeLastDrop[i];
   if (last && Math.hypot(x - last.x, z - last.z) < EYE_DROP_DIST) return;
   eyeLastDrop[i] = { x, z };
-  const decal = new THREE.Mesh(new THREE.CircleGeometry(0.16, 12),
+  const side = (eyeStepCount[i]++ % 2 === 0) ? 1 : -1;
+  const mesh = new THREE.Mesh(EYE_FOOT_GEOM,
     new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.65, depthWrite: false }));
-  decal.rotation.x = -Math.PI / 2;
-  decal.position.set(x, 0.02, z);
-  scene.add(decal);
-  eyeDecals.push(decal);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.x = side * 0.08; // alternating left/right foot, offset in the group's local frame
+  const group = new THREE.Group();
+  group.add(mesh);
+  group.rotation.y = heading;
+  group.position.set(x, 0.02, z);
+  scene.add(group);
+  const trail = eyeTrails[i];
+  trail.push(group);
+  if (trail.length > EYE_TRAIL_MAX) scene.remove(trail.shift());
 }
 
 socket.on('eyeFootprint', data => {
+  const b = bounds || 8;
   if (!eyeReal) {
-    eyeReal = { x: data.x, z: data.z };
-    const b = bounds || 8;
-    eyeDecoys = [0, 1].map(() => ({ x: (Math.random() * 2 - 1) * b * 0.7, z: (Math.random() * 2 - 1) * b * 0.7 }));
+    eyeReal = { x: data.x, z: data.z, angle: 0 };
+    eyeDecoys = [0, 1].map(() => ({
+      x: (Math.random() * 2 - 1) * b * 0.7,
+      z: (Math.random() * 2 - 1) * b * 0.7,
+      angle: Math.random() * Math.PI * 2,
+    }));
   } else {
     const dx = data.x - eyeReal.x, dz = data.z - eyeReal.z;
-    eyeReal = { x: data.x, z: data.z };
-    eyeDecoys = eyeDecoys.map(d => ({ x: d.x + dx, z: d.z + dz }));
+    const dist = Math.hypot(dx, dz);
+    if (dist > 0.001) eyeReal.angle = Math.atan2(dx, dz);
+    eyeReal.x = data.x; eyeReal.z = data.z;
+    eyeDecoys = eyeDecoys.map(d => {
+      const randAngle = Math.random() * Math.PI * 2;
+      const nx = Math.max(-b * 0.9, Math.min(b * 0.9, d.x + Math.sin(randAngle) * dist));
+      const nz = Math.max(-b * 0.9, Math.min(b * 0.9, d.z + Math.cos(randAngle) * dist));
+      return { x: nx, z: nz, angle: randAngle };
+    });
   }
-  dropEyeFootprint(0, eyeReal.x, eyeReal.z);
-  eyeDecoys.forEach((d, i) => dropEyeFootprint(i + 1, d.x, d.z));
+  dropEyeFootprint(0, eyeReal.x, eyeReal.z, eyeReal.angle);
+  eyeDecoys.forEach((d, i) => dropEyeFootprint(i + 1, d.x, d.z, d.angle));
 });
 
 // track color for self via roomUpdate
