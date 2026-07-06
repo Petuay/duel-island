@@ -611,6 +611,7 @@ class Room {
     const standaloneBlocks = []; // { id, x, z }
     const isStandalone = p => p.power === 'standalone';
     const noteStandalone = t => standaloneBlocks.push({ id: t.id, x: t.x, z: t.z });
+    const cycloneDrowned = new Set(); // ไซโคลน: players swept clean off the map's edge — counts as a kill
 
     // 1. ไซโคลน pre-pass — the storm sweeps BEFORE anything else, since it changes the
     //    real positions combat will use for the rest of the round.
@@ -630,10 +631,13 @@ class Room {
         if (perp > CYCLONE_HALF_WIDTH) continue;
         if (isStandalone(t)) { noteStandalone(t); continue; } // ยืนหนึ่ง shrugs off the storm
         const fromX = t.x, fromZ = t.z;
-        const toX = Math.max(-fieldHalf, Math.min(fieldHalf, t.x + dx * CYCLONE_PULL));
-        const toZ = Math.max(-fieldHalf, Math.min(fieldHalf, t.z + dz * CYCLONE_PULL));
-        t.x = toX; t.z = toZ;
-        pulls.push({ id: t.id, fromX, fromZ, toX, toZ });
+        const rawX = t.x + dx * CYCLONE_PULL, rawZ = t.z + dz * CYCLONE_PULL;
+        // if the storm would drag them clean off the island's edge, that's a kill — don't clamp
+        // back onto the field, let them fly past it (visually) and mark them drowned
+        const drowned = rawX < -fieldHalf || rawX > fieldHalf || rawZ < -fieldHalf || rawZ > fieldHalf;
+        t.x = rawX; t.z = rawZ;
+        if (drowned) cycloneDrowned.add(t.id);
+        pulls.push({ id: t.id, fromX, fromZ, toX: rawX, toZ: rawZ, drowned });
       }
       cyclones.push({ casterId: caster.id, x: origin.x, z: origin.z, angle, pulls });
     }
@@ -692,6 +696,7 @@ class Room {
 
     const firingOrder = shuffle(alive);
     const stillAlive = new Set(alive.map(p => p.id));
+    cycloneDrowned.forEach(id => stillAlive.delete(id)); // swept off the map = dead before anyone even fires
     const shots = [];
 
     // cast one straight segment. `selfId` is the id the bullet won't hit (its owner); it changes

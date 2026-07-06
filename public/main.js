@@ -534,20 +534,31 @@ try {
   composer.setSize(window.innerWidth, window.innerHeight);
 } catch (e) { console.warn('[postfx] disabled', e); composer = null; }
 
-// ---------- Painted textures (user-generated art in public/textures/) ----------
-const TEX_LOADER = new THREE.TextureLoader();
-function loadTex(name) {
-  const t = TEX_LOADER.load('textures/' + name);
-  if ('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+// Classic green grid floor — a plain procedural checker/grid texture instead of the painted stone dais.
+let gridTextureCache = null;
+function getGridTexture() {
+  if (gridTextureCache) return gridTextureCache;
+  const cvs = document.createElement('canvas');
+  cvs.width = 256; cvs.height = 256;
+  const ctx = cvs.getContext('2d');
+  ctx.fillStyle = '#2e8b3d';
+  ctx.fillRect(0, 0, 256, 256);
+  ctx.strokeStyle = '#4fb85f';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  for (let i = 0; i <= 256; i += 32) {
+    ctx.moveTo(i, 0); ctx.lineTo(i, 256);
+    ctx.moveTo(0, i); ctx.lineTo(256, i);
+  }
+  ctx.stroke();
+  const tex = new THREE.CanvasTexture(cvs);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  if ('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+  gridTextureCache = tex;
+  return tex;
 }
-const PAINTED = {
-  floor: { tex: loadTex('floor.webp') },
-  cloudRing: { tex: loadTex('cloudch.webp') } // ink-cloud border, alpha-masked (transparent centre + gate/stair gaps)
-};
 
-// Black background behind the ink clouds.
-scene.background = new THREE.Color(0x000000);
+scene.background = new THREE.Color(0xdce8f2); // soft sky blue, matches the fog now that the ink clouds are gone
 
 // small stylized decorations that cling to the island rim (pure scenery)
 function makePineTree(x, z) {
@@ -902,11 +913,6 @@ function rimPoint(t, half, inset = 0.6) {
   return [-r, u];
 }
 
-// cloud-ring plane size relative to island size. The texture's clouds turn opaque
-// at ~0.35 of its width from centre, so 1.7 lands the cloud band just outside the
-// wall (~0.6·n) and lets it billow outward to ~0.85·n into the void beyond.
-const CLOUD_RING_SCALE = 1.7;
-
 function buildIsland(size) {
   scene.remove(islandGroup);
   islandGroup = new THREE.Group();
@@ -914,8 +920,11 @@ function buildIsland(size) {
   const half = n / 2;
   const rng = mulberry32(1000 + n * 37); // stable map per island size; no flickering rebuilds
 
-  // Square playable field wearing the painted ground texture.
-  const groundMat = new THREE.MeshStandardMaterial({ map: PAINTED.floor.tex, roughness: 1, metalness: 0 });
+  // Square playable field wearing a classic green grid — a fixed-size cell repeated across the
+  // field so the grid density stays constant regardless of how much the island has shrunk.
+  const gridTex = getGridTexture();
+  gridTex.repeat.set(n, n);
+  const groundMat = new THREE.MeshStandardMaterial({ map: gridTex, roughness: 1, metalness: 0 });
   const sideMat = MAP_MATS.cliff;
   const base = new THREE.Mesh(
     new THREE.BoxGeometry(n, 0.64, n),
@@ -929,23 +938,6 @@ function buildIsland(size) {
   addBorderFrame(islandGroup, n);
   islandGroup.add(cornerDecorGroup);
   addCornerDecor(n);
-
-  // Painted ink-cloud ring as a flat layer beneath the island rim — its alpha
-  // mask leaves the centre (arena) and the gate/stair gaps clear, so only the
-  // swirling clouds peek out around the map edges (matching the reference art).
-  const cloudSize = n * CLOUD_RING_SCALE;
-  const cloudMat = new THREE.MeshBasicMaterial({
-    map: PAINTED.cloudRing.tex,
-    transparent: true,
-    depthWrite: false,
-    opacity: 0.96,
-    side: THREE.DoubleSide
-  });
-  const cloudRing = new THREE.Mesh(new THREE.PlaneGeometry(cloudSize, cloudSize), cloudMat);
-  cloudRing.rotation.x = -Math.PI / 2;
-  cloudRing.position.y = -0.14; // sits just below the arena top so it reads as a lower layer
-  cloudRing.renderOrder = 0;    // draw before the island base
-  islandGroup.add(cloudRing);
 
   scene.add(islandGroup);
   return n;
@@ -2591,7 +2583,7 @@ function setupCycloneIntro(data) {
     cycloneRevealModels.push({ mesh: g, from, to });
     (c.pulls || []).forEach(p => {
       const entry = revealMeshMap.get(p.id);
-      if (entry) cyclonePulls.push({ entry, fromX: p.fromX, fromZ: p.fromZ, toX: p.toX, toZ: p.toZ });
+      if (entry) cyclonePulls.push({ entry, fromX: p.fromX, fromZ: p.fromZ, toX: p.toX, toZ: p.toZ, drowned: !!p.drowned });
     });
   });
 }
@@ -2612,6 +2604,13 @@ function updateCycloneIntro(dt) {
   if (t >= 1 && cycloneRevealModels.length) {
     cycloneRevealModels.forEach(c => scene.remove(c.mesh));
     cycloneRevealModels = [];
+    // anyone the storm swept clean off the island's edge dies the moment it drags them there
+    cyclonePulls.forEach(p => {
+      if (p.drowned) {
+        floatLabel(p.entry.x, p.entry.z, 2.4 * p.entry.size, '🌀 ตกขอบเกาะ!', '#bcd8ff');
+        killVictim(p.entry.id);
+      }
+    });
     cyclonePulls = [];
   }
 }
