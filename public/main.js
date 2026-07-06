@@ -2156,6 +2156,9 @@ function dropEyeFootprint(i, x, z, heading) {
   if (trail.length > EYE_TRAIL_MAX) scene.remove(trail.shift());
 }
 
+const EYE_DECOY_TURN_RATE = 0.7; // max radians a decoy can turn per step — keeps its path a
+                                  // continuous curve instead of the fully-random zig-zag of before
+
 socket.on('eyeFootprint', data => {
   const b = bounds || 8;
   if (!eyeReal) {
@@ -2170,11 +2173,19 @@ socket.on('eyeFootprint', data => {
     const dist = Math.hypot(dx, dz);
     if (dist > 0.001) eyeReal.angle = Math.atan2(dx, dz);
     eyeReal.x = data.x; eyeReal.z = data.z;
+    const lim = b * 0.9;
     eyeDecoys = eyeDecoys.map(d => {
-      const randAngle = Math.random() * Math.PI * 2;
-      const nx = Math.max(-b * 0.9, Math.min(b * 0.9, d.x + Math.sin(randAngle) * dist));
-      const nz = Math.max(-b * 0.9, Math.min(b * 0.9, d.z + Math.cos(randAngle) * dist));
-      return { x: nx, z: nz, angle: randAngle };
+      // walk like a real person: only nudge the existing heading a little each step, and
+      // turn away from a wall instead of teleporting a fresh random direction into it
+      let angle = d.angle + (Math.random() * 2 - 1) * EYE_DECOY_TURN_RATE;
+      let sx = Math.sin(angle), sz = Math.cos(angle);
+      let nx = d.x + sx * dist, nz = d.z + sz * dist;
+      if (nx < -lim || nx > lim) { sx = -sx; nx = d.x + sx * dist; }
+      if (nz < -lim || nz > lim) { sz = -sz; nz = d.z + sz * dist; }
+      angle = Math.atan2(sx, sz);
+      nx = Math.max(-lim, Math.min(lim, nx));
+      nz = Math.max(-lim, Math.min(lim, nz));
+      return { x: nx, z: nz, angle };
     });
   }
   dropEyeFootprint(0, eyeReal.x, eyeReal.z, eyeReal.angle);
