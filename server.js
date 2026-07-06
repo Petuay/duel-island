@@ -21,10 +21,17 @@ const SHRINK_FACTOR = 0.8;
 
 // ---- Special cards (dealt one per player each round) ----
 // self-buff cards (always applied to the caster) + area cards (placed on the ground)
-const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror', 'wall', 'cyclone', 'firework', 'icecage'];
+const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror', 'wall', 'cyclone', 'firework', 'icecage',
+  'ghost', 'scapegoat', 'static', 'kneebrace'];
 const AREA_CARDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage']);
-// area cards are dealt a third as often as self-buff cards
-const cardWeight = id => (AREA_CARDS.has(id) ? 1 : 3);
+// keep the overall deal split at 75% self-buff / 25% area, regardless of how many of each exist:
+// every card's weight = its category's target share divided evenly among that category's cards.
+const SELF_CARD_SHARE = 0.75;
+const areaCardCount = CARD_IDS.filter(id => AREA_CARDS.has(id)).length;
+const selfCardCount = CARD_IDS.length - areaCardCount;
+const cardWeight = id => (AREA_CARDS.has(id)
+  ? (1 - SELF_CARD_SHARE) / areaCardCount
+  : SELF_CARD_SHARE / selfCardCount);
 // deal 3 distinct cards, weighted so area cards show up less. `excludeArea` is used for a
 // นักสะสม holder already sitting on a banked area card, to guarantee only one is ever active.
 function dealChoices(excludeArea) {
@@ -51,6 +58,7 @@ const CYCLONE_TRAVEL = 5; // blocks the storm sweeps forward
 const CYCLONE_HALF_WIDTH = 1.0; // perpendicular half-width of the storm's path corridor
 const CYCLONE_PULL = 2; // blocks a caught player is dragged along the storm's direction
 const ICECAGE_HALF = 1.5; // กรงหิมะ: half-size of the 3x3 freeze zone
+const STATIC_HALF = 1.5; // ไฟฟ้าสถิต: half-size of the 3x3 self-centred blast (replaces the shot)
 
 // build an obstacle for a bullet-interactive area card at (x,z) — wall is a rotatable
 // oriented rectangle (OBB), firework is a small axis-aligned trigger box
@@ -106,7 +114,8 @@ function reflect(dx, dz, nx, nz) {
 }
 
 // ---- Latent powers (each player picks one at match start, fixed for the match) ----
-const POWER_IDS = ['matrix', 'drunken', 'revenger', 'man', 'clairvoyant', 'collector'];
+const POWER_IDS = ['matrix', 'drunken', 'revenger', 'man', 'clairvoyant', 'collector',
+  'chainshare', 'gambler', 'standalone'];
 // deal 3 distinct powers to choose from
 function dealPowerChoices() {
   const pool = POWER_IDS.slice();
@@ -130,15 +139,19 @@ const SHOT_INTERVAL = 1300; // gap between each player's turn to fire
 const SHOT_END_PAUSE = 800; // pause after the last shot before advancing
 const POWER_PAUSE = 1900; // extra gap after a shot that triggered a power/mirror zoom (let it finish)
 const CYCLONE_INTRO_DURATION_C = 1500; // mirrors client CYCLONE_INTRO_DURATION
+const SCAPEGOAT_PAUSE = 2600; // reveal freeze while the ตัวตายตัวแทน swap UI + warp plays (mirrors client)
 // extra buffer since the client now waits for the camera to settle AND for a shot's bullets
 // to fully finish travelling before the next one fires — both can add real time beyond the
 // naive per-shot formula below, especially on a large island with slow-travelling bullets
-const CAMERA_SETTLE_SLACK = 4000;
+const CAMERA_SETTLE_SLACK = 5500; // bumped when bullet speed dropped 30% (bullets travel longer now)
 // a shot that pulls the camera in on a hidden power (or mirror) — the reveal waits for it
 function shotHasZoom(s) {
-  return !!(s.drunken || s.revenge || (s.dodges && s.dodges.length) ||
-    (s.manDeflects && s.manDeflects.length) || (s.mirrors && s.mirrors.length));
+  return !!(s.drunken || s.revenge || s.chainshare || (s.dodges && s.dodges.length) ||
+    (s.manDeflects && s.manDeflects.length) || (s.mirrors && s.mirrors.length) ||
+    (s.graze && s.graze.length) || (s.gambler && s.gambler.length));
 }
+// ตัวตายตัวแทน freezes the reveal to show its swap UI — needs a bigger pause than a normal zoom
+function shotHasScapegoat(s) { return !!(s.scapegoat && s.scapegoat.length); }
 
 const COLORS = [
   '#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6',
@@ -402,6 +415,8 @@ class Room {
       p.shotTargetId = null;
       p.card = null;
       p.cardBanked = false;
+      p.scapeUsed = false; // ตัวตายตัวแทน / ไม้พยุงเข่า are per-round: reset their one-time triggers
+      p.kneeUsed = false;
       // นักสะสม holding a banked area card only gets self-buff choices this round, so at most
       // one area card is ever active between the banked one and the fresh one — and its
       // placement (position/rotation) is preserved across the round instead of being wiped,
@@ -580,11 +595,18 @@ class Room {
     // for shot-shape cards (divine/bounce/thunder), the fresh pick wins if both active cards
     // would define one — dealing already guarantees at most one active card is ever area-type
     const effectiveShotCard = caster => {
-      const shapeCards = ['divine', 'bounce', 'thunder'];
+      const shapeCards = ['divine', 'bounce', 'thunder', 'ghost', 'static'];
       if (shapeCards.includes(caster.card)) return caster.card;
       if (caster.bankedCard && shapeCards.includes(caster.bankedCard)) return caster.bankedCard;
       return caster.card;
     };
+
+    // ยืนหนึ่ง (standalone): immune to every AREA effect — only a direct bullet can kill them.
+    // Each time an area effect would have caught a standalone player we log it so the client can
+    // pop the "ยืนหนึ่ง" label instead of applying the effect.
+    const standaloneBlocks = []; // { id, x, z }
+    const isStandalone = p => p.power === 'standalone';
+    const noteStandalone = t => standaloneBlocks.push({ id: t.id, x: t.x, z: t.z });
 
     // 1. ไซโคลน pre-pass — the storm sweeps BEFORE anything else, since it changes the
     //    real positions combat will use for the rest of the round.
@@ -602,6 +624,7 @@ class Room {
         if (along < 0 || along > CYCLONE_TRAVEL) continue;
         const perp = Math.abs(vx * dz - vz * dx);
         if (perp > CYCLONE_HALF_WIDTH) continue;
+        if (isStandalone(t)) { noteStandalone(t); continue; } // ยืนหนึ่ง shrugs off the storm
         const fromX = t.x, fromZ = t.z;
         const toX = Math.max(-fieldHalf, Math.min(fieldHalf, t.x + dx * CYCLONE_PULL));
         const toZ = Math.max(-fieldHalf, Math.min(fieldHalf, t.z + dz * CYCLONE_PULL));
@@ -636,6 +659,7 @@ class Room {
           const caughtIds = [];
           for (const t of alive) {
             if (Math.abs(t.x - a.x) <= ICECAGE_HALF && Math.abs(t.z - a.z) <= ICECAGE_HALF) {
+              if (isStandalone(t)) { noteStandalone(t); continue; } // ยืนหนึ่ง ไม่โดนแช่แข็ง
               t.frozenZone = {
                 minX: a.x - ICECAGE_HALF, maxX: a.x + ICECAGE_HALF,
                 minZ: a.z - ICECAGE_HALF, maxZ: a.z + ICECAGE_HALF
@@ -670,7 +694,7 @@ class Room {
     // after a Mirror reflection so the shot can fly back into the original shooter.
     // The Matrix lets its owner dodge the first hit of the match (bullet floats past to whoever's
     // behind) — but a Mirror card on that target overrides the dodge (card beats power).
-    const castSegment = (ox, oz, ang, shooter, selfId, excludeIds, excludeObs, dodgeOut, maxRange) => {
+    const castSegment = (ox, oz, ang, shooter, selfId, excludeIds, excludeObs, dodgeOut, maxRange, bypass) => {
       const dx = Math.sin(ang), dz = Math.cos(ang);
       const cands = [];
       for (const t of alive) {
@@ -698,7 +722,8 @@ class Room {
         if (c.fwd > exitDist) break;
         if (obs && obsT <= c.fwd) return obsPoint(); // obstacle stands between us and this player
         const t = c.t;
-        if (t.power === 'matrix' && !t.matrixUsed && !fx.get(t.id).mirror) {
+        // นักพนัน bypass (30%) blows straight through The Matrix's dodge as well
+        if (!bypass && t.power === 'matrix' && !t.matrixUsed && !fx.get(t.id).mirror) {
           t.matrixUsed = true;
           dodgeOut.push(t.id);
           continue; // dodged
@@ -710,14 +735,17 @@ class Room {
       return { type: 'miss', hitId: null, x: ox + dx * d, z: oz + dz * d, exited: exitInfo.t < 40 && exitDist >= exitInfo.t, exitAxis: exitInfo.axis };
     };
 
-    // resolve one bullet (bounces / MAN ricochets / Mirror reflections / area obstacles), collecting kills + events
-    const fireBullet = (shooter, a0, bounces, kills, ev, maxRange) => {
+    const activeCardsIncludes = (p, id) => !p.cardBanked && (p.card === id || p.bankedCard === id);
+
+    // resolve one bullet (bounces / MAN ricochets / Mirror reflections / area obstacles), collecting kills + events.
+    // `bypass` (นักพนัน) makes the shot ignore the victim's protective card/power entirely.
+    const fireBullet = (shooter, a0, bounces, kills, ev, maxRange, bypass) => {
       const segments = [];
       const touched = new Set(kills); // never interact with the same player twice on one bullet
       const touchedObs = new Set();
       let ox = shooter.x, oz = shooter.z, ang = a0, bouncesLeft = bounces, selfId = shooter.id;
       for (let step = 0; step < 8; step++) {
-        const r = castSegment(ox, oz, ang, shooter, selfId, touched, touchedObs, ev.dodges, maxRange);
+        const r = castSegment(ox, oz, ang, shooter, selfId, touched, touchedObs, ev.dodges, maxRange, bypass);
         const seg = { x1: ox, z1: oz, x2: r.x, z2: r.z, hitId: null };
         segments.push(seg);
         if (r.type === 'wall') { seg.wall = true; break; } // ต้นไม้ให้ร่ม blocks the shot
@@ -727,6 +755,7 @@ class Room {
           for (const t of alive) {
             if (!stillAlive.has(t.id)) continue;
             if (Math.abs(t.x - r.obs.x) <= FIREWORK_KILL && Math.abs(t.z - r.obs.z) <= FIREWORK_KILL) {
+              if (isStandalone(t)) { noteStandalone(t); continue; } // ยืนหนึ่ง ไม่ตายจากระเบิด
               victims.push(t.id); kills.add(t.id);
             }
           }
@@ -735,8 +764,34 @@ class Room {
         }
         if (r.type === 'player') {
           const victim = aliveMap.get(r.hitId);
+          // ตัวตายตัวแทน: about to be hit → swap places with a random player (may be the shooter,
+          // or even itself for laughs). Whoever ends up standing here takes the shot instead.
+          if (!bypass && victim && activeCardsIncludes(victim, 'scapegoat') && !victim.scapeUsed) {
+            victim.scapeUsed = true;
+            const pool = alive.filter(p => stillAlive.has(p.id)); // includes shooter + the victim
+            const other = pool[Math.floor(Math.random() * pool.length)];
+            const sx = victim.x, sz = victim.z;
+            victim.x = other.x; victim.z = other.z;
+            other.x = sx; other.z = sz;
+            seg.scapegoat = { id: victim.id, otherId: other.id };
+            ev.scapegoat.push({ id: victim.id, otherId: other.id });
+            // the bullet still lands at (r.x,r.z) = the scapegoat's OLD spot; `other` is there now
+            seg.hitId = other.id;
+            kills.add(other.id);
+            touched.add(other.id);
+            break;
+          }
+          // ไม้พยุงเข่า: takes the hit but survives — the bullet stops, and they can't move next round
+          if (!bypass && victim && activeCardsIncludes(victim, 'kneebrace') && !victim.kneeUsed) {
+            victim.kneeUsed = true;
+            victim.nextImmobile = true;
+            seg.graze = victim.id;
+            ev.knee.push(victim.id);
+            touched.add(victim.id);
+            break;
+          }
           // Mirror card: thorn armour bounces the shot straight back at the shooter (card beats power)
-          if (fx.get(r.hitId).mirror) {
+          if (!bypass && fx.get(r.hitId).mirror) {
             seg.mirror = victim.id;
             ev.mirror.push(victim.id);
             touched.add(victim.id);
@@ -745,7 +800,7 @@ class Room {
             continue;
           }
           // The MAN ricochets any shot that strikes his back
-          if (victim && victim.power === 'man' && hitFromBehind(ang, victim.angle)) {
+          if (!bypass && victim && victim.power === 'man' && hitFromBehind(ang, victim.angle)) {
             seg.manDeflect = victim.id;
             ev.man.push(victim.id);
             touched.add(victim.id);
@@ -755,6 +810,12 @@ class Room {
             ox = r.x; oz = r.z;
             continue;
           }
+          // นักพนัน flourish: mark the kill if a defense was actually steamrolled by the bypass
+          if (bypass && victim && (
+            (victim.power === 'matrix' && !victim.matrixUsed) || fx.get(victim.id).mirror ||
+            (victim.power === 'man' && hitFromBehind(ang, victim.angle)) ||
+            activeCardsIncludes(victim, 'scapegoat') || activeCardsIncludes(victim, 'kneebrace')
+          )) ev.gambler.push(victim.id);
           seg.hitId = r.hitId;
           kills.add(r.hitId);
           touched.add(r.hitId);
@@ -785,6 +846,38 @@ class Room {
       return segments;
     };
 
+    // กระสุนผี: a single straight bullet that phases through EVERYTHING — obstacles and players
+    // alike — killing every non-dodging player in a line before flying off the field edge.
+    const fireGhost = (shooter, a0, kills, ev, bypass) => {
+      const dx = Math.sin(a0), dz = Math.cos(a0);
+      const exitDist = rayExitInfo(shooter.x, shooter.z, dx, dz, fieldHalf).t;
+      const cands = [];
+      for (const t of alive) {
+        if (t.id === shooter.id || !stillAlive.has(t.id)) continue;
+        const vx = t.x - shooter.x, vz = t.z - shooter.z;
+        const fwd = vx * dx + vz * dz;
+        if (fwd <= 0.05 || fwd > exitDist) continue;
+        const perp = Math.abs(vx * dz - vz * dx);
+        if (perp <= effHitWidth(fx.get(shooter.id).size, fx.get(t.id).size)) cands.push({ t, fwd });
+      }
+      cands.sort((a, b) => a.fwd - b.fwd);
+      const segments = [];
+      let ox = shooter.x, oz = shooter.z;
+      for (const c of cands) {
+        const t = c.t;
+        if (!bypass && t.power === 'matrix' && !t.matrixUsed && !fx.get(t.id).mirror) {
+          t.matrixUsed = true; ev.dodges.push(t.id); continue; // even a ghost bullet gets dodged
+        }
+        segments.push({ x1: ox, z1: oz, x2: t.x, z2: t.z, hitId: t.id });
+        kills.add(t.id);
+        ox = t.x; oz = t.z;
+      }
+      segments.push({ x1: ox, z1: oz, x2: shooter.x + dx * exitDist, z2: shooter.z + dz * exitDist, hitId: null, ghost: true });
+      return segments;
+    };
+
+    const newEv = () => ({ dodges: [], man: [], mirror: [], scapegoat: [], knee: [], gambler: [] });
+
     for (const shooter of firingOrder) {
       if (!stillAlive.has(shooter.id)) {
         shots.push({ shooterId: shooter.id, type: 'skip', skipped: true, hitIds: [] });
@@ -806,27 +899,76 @@ class Room {
         continue;
       }
 
+      // ไฟฟ้าสถิต: no directional shot at all — a blast around the caster kills everyone nearby
+      // (ยืนหนึ่ง is immune, like every other area effect)
+      if (shotCard === 'static') {
+        const victims = [];
+        for (const t of alive) {
+          if (!stillAlive.has(t.id) || t.id === shooter.id) continue;
+          if (Math.abs(t.x - shooter.x) <= STATIC_HALF && Math.abs(t.z - shooter.z) <= STATIC_HALF) {
+            if (isStandalone(t)) { noteStandalone(t); continue; }
+            victims.push(t.id);
+          }
+        }
+        victims.forEach(id => stillAlive.delete(id));
+        shots.push({ shooterId: shooter.id, type: 'static', x: shooter.x, z: shooter.z, hitIds: victims });
+        continue;
+      }
+
       // The Drunken: 25% of the time fires ลูกซองแฉก's 4-bullet spread instead of the normal shot
       const baseAngle = shooter.angle;
       const drunken = shooter.power === 'drunken' && Math.random() < 0.25;
+      // นักพนัน: 30% of this shot ignores the victim's protective card/power entirely
+      const bypass = shooter.power === 'gambler' && Math.random() < 0.3;
 
       const kills = new Set();
-      const ev = { dodges: [], man: [], mirror: [] };
+      const ev = newEv();
       let bullets;
-      if (drunken || shotCard === 'divine') {
+      if (shotCard === 'ghost') {
+        // กระสุนผี: one piercing bullet through everything (bounce/spread don't apply)
+        bullets = [{ segments: fireGhost(shooter, baseAngle, kills, ev, bypass) }];
+      } else if (drunken || shotCard === 'divine') {
         // ลูกซองแฉก: 4 simultaneous bullets at +-30/+-60deg, capped to half the field diagonal
         const maxRange = fieldHalf * Math.SQRT2;
         const offsets = [-DIVINE_ANGLE_A, DIVINE_ANGLE_A, -DIVINE_ANGLE_B, DIVINE_ANGLE_B];
-        bullets = offsets.map(o => ({ segments: fireBullet(shooter, baseAngle + o, 0, kills, ev, maxRange) }));
+        bullets = offsets.map(o => ({ segments: fireBullet(shooter, baseAngle + o, 0, kills, ev, maxRange, bypass) }));
       } else {
         const bounces = shotCard === 'bounce' ? 2 : 0;
-        bullets = [{ segments: fireBullet(shooter, baseAngle, bounces, kills, ev) }];
+        bullets = [{ segments: fireBullet(shooter, baseAngle, bounces, kills, ev, undefined, bypass) }];
       }
       kills.forEach(id => stillAlive.delete(id));
       shots.push({
         shooterId: shooter.id, type: 'shot', bullets, hitIds: [...kills],
-        dodges: ev.dodges, manDeflects: ev.man, mirrors: ev.mirror, drunken
+        dodges: ev.dodges, manDeflects: ev.man, mirrors: ev.mirror,
+        scapegoat: ev.scapegoat, graze: ev.knee, gambler: bypass && ev.gambler.length ? ev.gambler : [],
+        drunken
       });
+    }
+
+    // แชร์ลูกโซ่ (chainshare): whenever a chainshare holder's bullet kills someone, a ลูกซองแฉก
+    // 4-bullet spread erupts from each fresh corpse. Snapshot the shots first so we only react to
+    // the primary volley (not to chainshare's own follow-up kills).
+    const chainKilled = new Set();
+    for (const s of shots.slice()) {
+      const shooter = this.players.get(s.shooterId);
+      if (!shooter || shooter.power !== 'chainshare' || !s.hitIds || !s.hitIds.length) continue;
+      for (const victimId of s.hitIds) {
+        if (chainKilled.has(victimId)) continue;
+        chainKilled.add(victimId);
+        const corpse = aliveMap.get(victimId);
+        if (!corpse) continue;
+        const kills = new Set();
+        const ev = newEv();
+        const maxRange = fieldHalf * Math.SQRT2;
+        const offsets = [-DIVINE_ANGLE_A, DIVINE_ANGLE_A, -DIVINE_ANGLE_B, DIVINE_ANGLE_B];
+        const bullets = offsets.map(o => ({ segments: fireBullet(corpse, o, 0, kills, ev, maxRange) }));
+        kills.forEach(id => stillAlive.delete(id));
+        shots.push({
+          shooterId: victimId, type: 'shot', chainshare: true, sourceId: shooter.id, bullets, hitIds: [...kills],
+          dodges: ev.dodges, manDeflects: ev.man, mirrors: ev.mirror,
+          scapegoat: ev.scapegoat, graze: ev.knee, gambler: [], drunken: false
+        });
+      }
     }
 
     // The Revenger (จิตพยาบาท): anyone who fell this round fires THREE bullets in random
@@ -834,13 +976,14 @@ class Room {
     for (const dead of alive.filter(p => !stillAlive.has(p.id))) {
       if (dead.power !== 'revenger') continue;
       const kills = new Set();
-      const ev = { dodges: [], man: [], mirror: [] };
+      const ev = newEv();
       const bullets = [];
       for (let i = 0; i < 3; i++) bullets.push({ segments: fireBullet(dead, Math.random() * Math.PI * 2, 0, kills, ev) });
       kills.forEach(id => stillAlive.delete(id));
       shots.push({
         shooterId: dead.id, type: 'shot', revenge: true, bullets, hitIds: [...kills],
-        dodges: ev.dodges, manDeflects: ev.man, mirrors: ev.mirror, drunken: false
+        dodges: ev.dodges, manDeflects: ev.man, mirrors: ev.mirror,
+        scapegoat: ev.scapegoat, graze: ev.knee, gambler: [], drunken: false
       });
     }
 
@@ -857,6 +1000,14 @@ class Room {
         p.eliminatedRound = this.round;
         eliminated.push(p.id);
         if (!p.isBot) this.joinSpectators(p.id);
+      }
+    }
+    // ไม้พยุงเข่า: survivors who ate a hit this round are pinned in place next round — reuse the
+    // กรงหิมะ frozen-zone plumbing by clamping them to a near-zero box at their current spot.
+    for (const p of alive) {
+      if (p.alive && p.nextImmobile) {
+        p.frozenZone = { minX: p.x - 0.01, maxX: p.x + 0.01, minZ: p.z - 0.01, maxZ: p.z + 0.01, knee: true };
+        p.nextImmobile = false;
       }
     }
 
@@ -880,18 +1031,20 @@ class Room {
         : { type: o.type, x: o.x, z: o.z, minX: o.minX, maxX: o.maxX, minZ: o.minZ, maxZ: o.maxZ }),
       cyclones,
       icecages,
+      standaloneBlocks,
       eliminated,
       survivors: this.aliveIds()
     };
     io.to(this.code).emit('roundResult', payload);
 
     const zoomCount = shots.filter(shotHasZoom).length;
+    const scapegoatCount = shots.filter(shotHasScapegoat).length;
     const cycloneIntro = cyclones.length ? CYCLONE_INTRO_DURATION_C : 0;
     // CAMERA_SETTLE_SLACK: the client now waits for its reveal camera to actually finish
     // panning back to normal before each next effect fires, which can add a little real
     // time beyond this formula — pad the server's timeout so it never cuts the reveal short.
     const revealDuration = SHOT_START_DELAY + cycloneIntro + shots.length * SHOT_INTERVAL
-      + SHOT_END_PAUSE + zoomCount * POWER_PAUSE + CAMERA_SETTLE_SLACK;
+      + SHOT_END_PAUSE + zoomCount * POWER_PAUSE + scapegoatCount * SCAPEGOAT_PAUSE + CAMERA_SETTLE_SLACK;
     this.timer = setTimeout(() => this.afterReveal(), revealDuration);
   }
 

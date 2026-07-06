@@ -134,7 +134,11 @@ const CARDS = [
   { id: 'wall', emoji: '🌳', name: 'ต้นไม้ให้ร่ม', desc: 'พื้นที่: คลิกซ้ายวางแถวต้นไม้ 1×3 บังกระสุน • คลิกขวาหมุน 45°' },
   { id: 'cyclone', emoji: '🌀', name: 'ไซโคลน', desc: 'พื้นที่: คลิกซ้ายวางจุดเริ่มพายุ แล้วคลิกซ้ำเพื่อกำหนดทิศ ก่อนยิงนัดแรกพายุจะพัดผ่าน 5 บล็อก ดูดคนที่โดนไป 2 บล็อก' },
   { id: 'firework', emoji: '🌋', name: 'ปอมเปอี', desc: 'พื้นที่: วางภูเขาไฟ 1×1 ถ้ากระสุนโดน ระเบิดฆ่าทุกคนในระยะ 3×3' },
-  { id: 'icecage', emoji: '❄️', name: 'กรงหิมะ', desc: 'พื้นที่: แช่แข็งโซน 3×3 ใครยืนอยู่ในนั้นตอนเปิดผล ตาถัดไปจะเดินได้แค่ในโซนนี้เท่านั้น' }
+  { id: 'icecage', emoji: '❄️', name: 'กรงหิมะ', desc: 'พื้นที่: แช่แข็งโซน 3×3 ใครยืนอยู่ในนั้นตอนเปิดผล ตาถัดไปจะเดินได้แค่ในโซนนี้เท่านั้น' },
+  { id: 'ghost', emoji: '👻', name: 'กระสุนผี', desc: 'กระสุนทะลุทุกอย่าง สิ่งกีดขวางก็ทะลุ โดนคนแล้วก็วิ่งต่อ เก็บทุกคนในแนวเดียวกัน' },
+  { id: 'scapegoat', emoji: '🔀', name: 'ตัวตายตัวแทน', desc: 'ถ้ารอบนี้กำลังจะโดนยิง สุ่มสลับตำแหน่งกับผู้เล่นคนอื่น (สลับกับคนยิงหรือกับตัวเองก็ได้!)' },
+  { id: 'static', emoji: '🔌', name: 'ไฟฟ้าสถิต', desc: 'ไม่ยิงปืน แต่ปล่อยไฟช็อตระเบิดรอบตัวเอง 3×3 ฆ่าทุกคนที่ยืนใกล้' },
+  { id: 'kneebrace', emoji: '🦵', name: 'ไม้พยุงเข่า', desc: 'ถ้าโดนยิงรอบนี้จะไม่ตาย แต่ตาถัดไปจะขยับตำแหน่งไม่ได้' }
 ];
 const cardById = id => CARDS.find(c => c.id === id) || null;
 const AREA_CARD_IDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage']);
@@ -150,13 +154,16 @@ let myCard = null;      // the card I was dealt this round
 const SHOT_START_DELAY = 4200;
 const SHOT_INTERVAL = 1300;
 const POWER_PAUSE = 1900; // extra gap after a shot that triggers a power/mirror zoom
-const BULLET_SPEED = 12; // units/sec — medium travel speed for the bullet ball
+const SCAPEGOAT_PAUSE = 2600; // reveal freeze while the ตัวตายตัวแทน swap UI + warp plays (mirrors server)
+const BULLET_SPEED = 8.4; // units/sec — dropped 30% from 12 for a slower, more readable bullet
 const REVENGE_RISE_MS = 600; // จิตพยาบาท: corpse stands back up before firing its death-shots
 // does this shot pull the camera in on a power/mirror? (must match server shotHasZoom)
 function shotHasZoom(s) {
-  return !!(s.drunken || s.revenge || (s.dodges && s.dodges.length) ||
-    (s.manDeflects && s.manDeflects.length) || (s.mirrors && s.mirrors.length));
+  return !!(s.drunken || s.revenge || s.chainshare || (s.dodges && s.dodges.length) ||
+    (s.manDeflects && s.manDeflects.length) || (s.mirrors && s.mirrors.length) ||
+    (s.graze && s.graze.length) || (s.gambler && s.gambler.length));
 }
+function shotHasScapegoat(s) { return !!(s.scapegoat && s.scapegoat.length); }
 
 const $ = id => document.getElementById(id);
 
@@ -348,7 +355,8 @@ socket.on('roomList', ({ rooms }) => { openRoomsCache = rooms; renderOpenRooms()
 
 // ---------- Reference guide (collapsible list of all cards + powers) ----------
 function buildGuide() {
-  const powerOrder = ['matrix', 'drunken', 'revenger', 'man', 'clairvoyant', 'collector'];
+  const powerOrder = ['matrix', 'drunken', 'revenger', 'man', 'clairvoyant', 'collector',
+    'chainshare', 'gambler', 'standalone'];
   let html = '<div class="guideHead">🃏 การ์ดพลัง (สุ่มแจกเลือก 1 จาก 3 ทุกรอบ)</div>';
   CARDS.forEach(c => {
     html += `<div class="guideItem"><span class="gEmoji">${c.emoji}</span>
@@ -1272,18 +1280,23 @@ function getBloodTexture() {
 let fxSprites = [], fxBeams = [], fxParticles = [], revealDecals = [], fxBullets = [], fxLabels = [];
 
 // hidden-power icons + a short label that floats up above a player when a power fires
-const POWER_EMOJI = { matrix: '🕶️', drunken: '🥴', revenger: '👻', man: '💪', clairvoyant: '👁️', collector: '🎒' };
+const POWER_EMOJI = { matrix: '🕶️', drunken: '🥴', revenger: '👻', man: '💪', clairvoyant: '👁️', collector: '🎒',
+  chainshare: '⛓️', gambler: '🎲', standalone: '🥇' };
 const POWER_DESC = {
   matrix: 'The Matrix — หลบกระสุนนัดแรกของเกม กระสุนทะลุไปโดนคนข้างหลัง',
   drunken: 'เมาดิบ — 25% ยิงออกเป็นลูกซองแฉก 4 นัดแทน',
   revenger: 'จิตพยาบาท — ตายแล้วยิงสุ่ม 3 นัด',
   man: 'แผ่นหลังลูกผู้ชาย — โดนยิงด้านหลังสะท้อนกลับตามมุมตกกระทบ',
   clairvoyant: 'เนตรทิพย์ — ตอนเตรียมตัว เห็นรอยเท้าคู่ต่อสู้สุ่ม 1 คน (มีรอยเท้าหลอกอีก 2 รอย)',
-  collector: 'นักสะสม — เก็บการ์ดที่เลือกไว้ใช้ตาถัดไปได้ 1 ใบ'
+  collector: 'นักสะสม — เก็บการ์ดที่เลือกไว้ใช้ตาถัดไปได้ 1 ใบ',
+  chainshare: 'แชร์ลูกโซ่ — ถ้ากระสุนฆ่าคนได้ ยิงลูกซองแฉกออกจากศพคนนั้นต่อ',
+  gambler: 'นักพนัน — 30% คนที่โดนยิงจะไม่ได้ใช้เอฟเฟคป้องกัน (ทั้งการ์ดและพลัง)',
+  standalone: 'ยืนหนึ่ง — ไม่รับผลจากเอฟเฟคพื้นที่ใด ๆ ตายจากกระสุนยิงเท่านั้น'
 };
 // card ids and short blurbs for the in-game reference sheet
 const CARD_NAMES = CARDS; // reuse; each has {id,emoji,name,desc}
 let zoomFocus = null; // { x, z, until } — pulls the reveal camera in on a triggered power
+let scapegoatFreeze = null; // ตัวตายตัวแทน: active mid-reveal swap freeze (halts the clock + shots)
 let playerInfo = new Map(); // id -> { name, color }
 let revealedPowers = new Map(); // id -> powerId, kept on the left panel until the match ends
 
@@ -1383,15 +1396,20 @@ function spawnFlash(x, y, z, baseScale, color, duration) {
 function spawnSegmentBullet(color, segments, radius) {
   if (!segments || !segments.length) return;
   const pts = [new THREE.Vector3(segments[0].x1, 0.55, segments[0].z1)];
-  const hitAt = [null], explodeAt = [null], mirrorAt = [null];
+  const hitAt = [null], explodeAt = [null], mirrorAt = [null], grazeAt = [null];
+  let scapegoat = null, scapegoatDist = 0;
   segments.forEach(sg => {
     pts.push(new THREE.Vector3(sg.x2, 0.55, sg.z2));
     hitAt.push(sg.hitId || null);
     explodeAt.push(sg.explode || null);
     mirrorAt.push(sg.mirror || null);
+    grazeAt.push(sg.graze || null);
+    if (sg.scapegoat) scapegoat = sg.scapegoat;
   });
   const cum = [0];
   for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
+  // ตัวตายตัวแทน: freeze the reveal to show the swap once the bullet is halfway to its target
+  if (scapegoat) scapegoatDist = cum[cum.length - 1] * 0.5;
   const geo = new THREE.SphereGeometry(radius, 12, 12);
   const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.98 });
   const mesh = new THREE.Mesh(geo, mat);
@@ -1406,7 +1424,8 @@ function spawnSegmentBullet(color, segments, radius) {
   glow.position.copy(pts[0]);
   scene.add(glow);
   fxBullets.push({
-    mesh, glow, pts, cum, hitAt, explodeAt, mirrorAt,
+    mesh, glow, pts, cum, hitAt, explodeAt, mirrorAt, grazeAt,
+    scapegoat, scapegoatDist, scapegoatDone: false, frozen: false,
     total: cum[cum.length - 1], dist: 0, nextIdx: 1, shieldMesh: null,
     hasHit: hitAt.some(h => h) // this bullet will actually strike someone — camera chases it in updateReveal
   });
@@ -1463,6 +1482,7 @@ function applyGhostTint(group, opacity) {
 // (ไซโคลน is handled separately below — it's a point+direction, not a placed box)
 const THUNDER_HALF_C = 1.0;
 const ICECAGE_HALF_C = 1.5;
+const STATIC_HALF_C = 1.5; // ไฟฟ้าสถิต blast radius (mirrors server STATIC_HALF)
 let areaMarker = null;      // my own placement ghost during the placement phase
 let obstacleMeshes = [];    // reveal-phase obstacle meshes
 
@@ -1585,6 +1605,14 @@ function updateFx(dt) {
   for (let i = fxBullets.length - 1; i >= 0; i--) {
     const b = fxBullets[i];
 
+    // ตัวตายตัวแทน: once this bullet is halfway to its target, freeze everything and play the
+    // swap UI/warp before it lands — the bullet holds in place until the freeze finishes
+    if (b.frozen) continue;
+    if (b.scapegoat && !b.scapegoatDone && !scapegoatFreeze && b.dist >= b.scapegoatDist) {
+      startScapegoatFreeze(b);
+      continue;
+    }
+
     // Mirror card: slow the bullet as it nears the mirror-holder + grow a barrier there,
     // right up until the reflect actually happens
     let speedFactor = 1;
@@ -1613,10 +1641,11 @@ function updateFx(dt) {
     }
     b.dist += BULLET_SPEED * dt * speedFactor;
 
-    // trigger the kill / firework blast at any vertex we've now passed
+    // trigger the kill / firework blast / knee-brace graze at any vertex we've now passed
     while (b.nextIdx < b.pts.length && b.dist >= b.cum[b.nextIdx]) {
       if (b.hitAt[b.nextIdx]) killVictim(b.hitAt[b.nextIdx]);
       if (b.explodeAt[b.nextIdx]) spawnExplosion(b.explodeAt[b.nextIdx]);
+      if (b.grazeAt[b.nextIdx]) grazeVictim(b.grazeAt[b.nextIdx]);
       b.nextIdx++;
     }
     if (b.dist >= b.total) {
@@ -2049,6 +2078,17 @@ function updateFrozenZoneMarker() {
   if (frozenZoneMarker) { scene.remove(frozenZoneMarker); frozenZoneMarker = null; }
   if (!myFrozenZone) return;
   const z = myFrozenZone;
+  // ไม้พยุงเข่า: pinned in place (a near-zero zone) — show an amber "no move" ring, not ice crystals
+  if (z.knee) {
+    const g = new THREE.Group();
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.72, 28),
+      new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.03; g.add(ring);
+    g.position.set((z.minX + z.maxX) / 2, 0, (z.minZ + z.maxZ) / 2);
+    scene.add(g);
+    frozenZoneMarker = g;
+    return;
+  }
   const w = z.maxX - z.minX, d = z.maxZ - z.minZ;
   const g = new THREE.Group();
   [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(([sx, sz]) => {
@@ -2231,6 +2271,9 @@ function clearRevealMeshes() {
   revealDecals.forEach(d => scene.remove(d)); revealDecals = [];
   clearObstacles();
   zoomFocus = null;
+  if (scapegoatFreeze && scapegoatFreeze.beam) scene.remove(scapegoatFreeze.beam.mesh);
+  scapegoatFreeze = null;
+  const sgBanner = $('scapegoatBanner'); if (sgBanner) sgBanner.classList.add('hidden');
   revealActive = false;
 }
 
@@ -2424,10 +2467,22 @@ socket.on('roundResult', data => {
   const cyclonePullById = new Map();
   (data.cyclones || []).forEach(c => (c.pulls || []).forEach(p => cyclonePullById.set(p.id, p)));
 
+  // ตัวตายตัวแทน: the two swapped players START at their PRE-swap spots (= each other's final
+  // position, since they simply traded places) and only teleport when the swap UI fires mid-reveal
+  const finalPosById = new Map(data.players.map(p => [p.id, { x: p.x, z: p.z }]));
+  const scapegoatStart = new Map();
+  (data.shots || []).forEach(s => (s.scapegoat || []).forEach(sc => {
+    if (sc.id === sc.otherId) return;
+    const a = finalPosById.get(sc.id), o = finalPosById.get(sc.otherId);
+    if (a && o) { scapegoatStart.set(sc.id, o); scapegoatStart.set(sc.otherId, a); } // start where the other ends
+  }));
+
   data.players.forEach(p => {
     const size = p.size || 1;
     const pull = cyclonePullById.get(p.id);
-    const startX = pull ? pull.fromX : p.x, startZ = pull ? pull.fromZ : p.z;
+    const sgStart = scapegoatStart.get(p.id);
+    const startX = sgStart ? sgStart.x : (pull ? pull.fromX : p.x);
+    const startZ = sgStart ? sgStart.z : (pull ? pull.fromZ : p.z);
     const mesh = makePlayerMesh(p.color, p.id === selfId, p.char);
     mesh.position.set(startX, 0, startZ);
     mesh.rotation.y = p.angle;
@@ -2438,12 +2493,22 @@ socket.on('roundResult', data => {
     scene.add(sprite);
     const entry = {
       mesh, sprite, id: p.id, x: startX, z: startZ, angle: p.angle, color: p.color, size,
-      wasHit: p.wasHit, dying: false, bloodSpawned: false
+      wasHit: p.wasHit, dying: false, bloodSpawned: false,
+      scapegoatTo: { x: p.x, z: p.z } // where they teleport to once the swap UI plays
     };
     revealMeshes.push(entry);
     revealMeshMap.set(p.id, entry);
   });
   setupCycloneIntro(data);
+
+  // ยืนหนึ่ง: pop a label wherever an area effect was shrugged off (deduped per player)
+  const seenStandalone = new Set();
+  (data.standaloneBlocks || []).forEach(b => {
+    if (seenStandalone.has(b.id)) return;
+    seenStandalone.add(b.id);
+    floatLabel(b.x, b.z, 2.6, POWER_EMOJI.standalone + ' ยืนหนึ่ง!', '#ffd76b');
+    revealPower(b.id, 'standalone');
+  });
   const cycloneIntro = (data.cyclones && data.cyclones.length) ? CYCLONE_INTRO_DURATION : 0;
 
   // blood/deaths are now triggered as the travelling bullets (or thunder) actually reach victims
@@ -2451,8 +2516,9 @@ socket.on('roundResult', data => {
   let acc = SHOT_START_DELAY + cycloneIntro, pausedTotal = 0;
   revealShots = data.shots.map((s, i) => {
     const fireTime = acc;
-    acc += SHOT_INTERVAL + (shotHasZoom(s) ? POWER_PAUSE : 0);
-    if (shotHasZoom(s)) pausedTotal += POWER_PAUSE;
+    const pause = (shotHasZoom(s) ? POWER_PAUSE : 0) + (shotHasScapegoat(s) ? SCAPEGOAT_PAUSE : 0);
+    acc += SHOT_INTERVAL + pause;
+    pausedTotal += pause;
     return { ...s, fireTime, triggered: false };
   });
 
@@ -2542,6 +2608,14 @@ const CAMERA_SETTLE_EPS = 0.5; // how close the reveal camera must get before ne
 function updateReveal(dt) {
   if (!revealActive) return;
 
+  // ตัวตายตัวแทน freeze: while a swap UI is playing, the reveal clock + shots are on hold —
+  // only the warp animation, the frozen bullet, and existing fx keep ticking
+  if (scapegoatFreeze) {
+    updateScapegoatFreeze(dt);
+    updateFx(dt);
+    return;
+  }
+
   // pull the camera in on a player whose hidden power is firing, else the wide overview —
   // but a bullet that's actually about to strike someone takes priority: chase it in flight
   const chaseBullet = fxBullets.find(b => b.hasHit);
@@ -2603,6 +2677,73 @@ function focusOn(entry, ms) {
   zoomFocus = { x: entry.x, z: entry.z, until: revealClock + ms };
 }
 
+function moveEntryTo(entry, to) {
+  entry.x = to.x; entry.z = to.z;
+  entry.mesh.position.set(to.x, entry.mesh.position.y, to.z);
+  if (entry.sprite) entry.sprite.position.set(to.x, 1.7 * entry.size + 0.2, to.z);
+}
+
+// glowing warp tube linking the two players being swapped by ตัวตายตัวแทน
+function makeWarpBeam(a, o) {
+  const start = new THREE.Vector3(a.x, 0.8, a.z), end = new THREE.Vector3(o.x, 0.8, o.z);
+  const len = Math.max(0.01, start.distanceTo(end));
+  const cyl = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.12, len, 10),
+    new THREE.MeshBasicMaterial({ color: 0xc9a0ff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false })
+  );
+  cyl.position.copy(start.clone().add(end).multiplyScalar(0.5));
+  cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(start).normalize());
+  scene.add(cyl);
+  return { mesh: cyl, mat: cyl.material };
+}
+
+function startScapegoatFreeze(b) {
+  b.frozen = true; b.scapegoatDone = true;
+  const ev = b.scapegoat; // { id, otherId }
+  const a = revealMeshMap.get(ev.id), o = revealMeshMap.get(ev.otherId);
+  const self = ev.id === ev.otherId;
+  const cx = a && o ? (a.x + o.x) / 2 : (a ? a.x : 0);
+  const cz = a && o ? (a.z + o.z) / 2 : (a ? a.z : 0);
+  const banner = $('scapegoatBanner');
+  if (banner) {
+    banner.textContent = self ? '🔀 ตัวตายตัวแทน — สลับกับตัวเอง! 😆' : '🔀 ตัวตายตัวแทน! สลับตำแหน่ง';
+    banner.classList.remove('hidden');
+  }
+  scapegoatFreeze = {
+    t: 0, a, o, self, cx, cz, bullet: b, teleported: false,
+    beam: (a && o && !self) ? makeWarpBeam(a, o) : null,
+    aTo: a ? a.scapegoatTo : null, oTo: o ? o.scapegoatTo : null
+  };
+}
+
+function updateScapegoatFreeze(dt) {
+  const f = scapegoatFreeze;
+  f.t += dt * 1000;
+  zoomCamPos.set(f.cx, 5.4, f.cz + 5);
+  camera.position.lerp(zoomCamPos, 0.1);
+  camera.lookAt(f.cx, 0.6, f.cz);
+  if (f.beam) {
+    const pulse = 0.5 + 0.5 * Math.sin(f.t * 0.02);
+    f.beam.mat.opacity = 0.4 + 0.5 * pulse;
+    f.beam.mesh.scale.set(1 + pulse * 0.6, 1, 1 + pulse * 0.6);
+  }
+  if (!f.teleported && f.t >= SCAPEGOAT_PAUSE * 0.45) {
+    f.teleported = true;
+    if (!f.self) {
+      if (f.a && f.aTo) { spawnFlash(f.a.x, 1.0, f.a.z, 1.6, 0xb98cff, 0.5); moveEntryTo(f.a, f.aTo); }
+      if (f.o && f.oTo) { spawnFlash(f.o.x, 1.0, f.o.z, 1.6, 0xb98cff, 0.5); moveEntryTo(f.o, f.oTo); }
+      if (f.a) spawnFlash(f.a.x, 1.0, f.a.z, 1.6, 0xb98cff, 0.5);
+      if (f.o) spawnFlash(f.o.x, 1.0, f.o.z, 1.6, 0xb98cff, 0.5);
+    }
+  }
+  if (f.t >= SCAPEGOAT_PAUSE) {
+    if (f.beam) scene.remove(f.beam.mesh);
+    const banner = $('scapegoatBanner'); if (banner) banner.classList.add('hidden');
+    f.bullet.frozen = false;
+    scapegoatFreeze = null;
+  }
+}
+
 // reveal a triggered hidden power: zoom in + a floating label; also the Mirror card reflect
 function handlePowerEvents(s) {
   if (s.drunken) {
@@ -2640,6 +2781,18 @@ function handlePowerEvents(s) {
     focusOn(e, 2200);
     floatLabel(e.x, e.z, 2.6 * e.size, '🪞 สะท้อน!', '#bfe9ff');
   });
+  // แชร์ลูกโซ่: the killer's power spawns a ลูกซองแฉก out of a corpse
+  if (s.chainshare) {
+    const e = revealMeshMap.get(s.shooterId); // shooterId here is the corpse the spread erupts from
+    if (e) { focusOn(e, 2400); floatLabel(e.x, e.z, 2.3, POWER_EMOJI.chainshare + ' แชร์ลูกโซ่!', '#caa8ff'); }
+    if (s.sourceId) revealPower(s.sourceId, 'chainshare');
+  }
+  // นักพนัน: this shot punched through the victim's defenses
+  (s.gambler || []).forEach(id => {
+    const e = revealMeshMap.get(id);
+    if (e) floatLabel(e.x, e.z, 2.7 * e.size, POWER_EMOJI.gambler + ' ทะลุเกราะ!', '#ffe08a');
+  });
+  if (s.gambler && s.gambler.length) revealPower(s.shooterId, 'gambler');
 }
 
 // a victim goes down: spatter blood once and start the fall animation
@@ -2650,6 +2803,25 @@ function killVictim(id) {
   if (!entry.bloodSpawned) {
     entry.bloodSpawned = true;
     spawnImpact(new THREE.Vector3(entry.x, 0.5, entry.z));
+  }
+}
+
+// ไม้พยุงเข่า: took the hit but survives — blood + a label, but no death
+function grazeVictim(id) {
+  const entry = revealMeshMap.get(id);
+  if (!entry || entry.grazeShown) return;
+  entry.grazeShown = true;
+  spawnImpact(new THREE.Vector3(entry.x, 0.5, entry.z));
+  floatLabel(entry.x, entry.z, 2.4 * entry.size, '🦵 ไม้พยุงเข่า!', '#a6e5b4');
+}
+
+// ไฟฟ้าสถิต blast: crackling electric burst around the caster
+function spawnStaticBlast(x, z) {
+  spawnFlash(x, 0.9, z, 2.8, 0xbfe0ff, 0.55);
+  spawnFlash(x, 1.5, z, 1.8, 0xffffff, 0.45);
+  for (let i = 0; i < 12; i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * STATIC_HALF_C;
+    spawnFlash(x + Math.cos(a) * r, 0.4, z + Math.sin(a) * r, 0.6, 0xa9d4ff, 0.4);
   }
 }
 
@@ -2667,6 +2839,14 @@ function triggerShot(s) {
       spawnLightning(s.x, s.z);
       (s.hitIds || []).forEach(id => setTimeout(() => killVictim(id), 220));
     }
+    return;
+  }
+
+  // ไฟฟ้าสถิต: no bullet — a blast around the caster kills everyone nearby
+  if (s.type === 'static') {
+    spawnStaticBlast(s.x, s.z);
+    floatLabel(shooterEntry.x, shooterEntry.z, 2.4 * shooterEntry.size, '🔌 ไฟฟ้าสถิต!', '#bfe0ff');
+    (s.hitIds || []).forEach(id => setTimeout(() => killVictim(id), 200));
     return;
   }
 
