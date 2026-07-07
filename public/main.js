@@ -534,31 +534,19 @@ try {
   composer.setSize(window.innerWidth, window.innerHeight);
 } catch (e) { console.warn('[postfx] disabled', e); composer = null; }
 
-// Classic green grid floor — a plain procedural checker/grid texture instead of the painted stone dais.
-let gridTextureCache = null;
-function getGridTexture() {
-  if (gridTextureCache) return gridTextureCache;
-  const cvs = document.createElement('canvas');
-  cvs.width = 256; cvs.height = 256;
-  const ctx = cvs.getContext('2d');
-  ctx.fillStyle = '#2e8b3d';
-  ctx.fillRect(0, 0, 256, 256);
-  ctx.strokeStyle = '#4fb85f';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  for (let i = 0; i <= 256; i += 32) {
-    ctx.moveTo(i, 0); ctx.lineTo(i, 256);
-    ctx.moveTo(0, i); ctx.lineTo(256, i);
-  }
-  ctx.stroke();
-  const tex = new THREE.CanvasTexture(cvs);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  if ('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
-  gridTextureCache = tex;
-  return tex;
+// ---------- Painted textures (user-generated art in public/textures/) ----------
+const TEX_LOADER = new THREE.TextureLoader();
+function loadTex(name) {
+  const t = TEX_LOADER.load('textures/' + name);
+  if ('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
+const PAINTED = {
+  floor: { tex: loadTex('floor.webp') }
+};
 
-scene.background = new THREE.Color(0xdce8f2); // soft sky blue, matches the fog now that the ink clouds are gone
+// Black background, matching the original scenery (the ink-cloud ring itself stays removed).
+scene.background = new THREE.Color(0x000000);
 
 // small stylized decorations that cling to the island rim (pure scenery)
 function makePineTree(x, z) {
@@ -920,11 +908,8 @@ function buildIsland(size) {
   const half = n / 2;
   const rng = mulberry32(1000 + n * 37); // stable map per island size; no flickering rebuilds
 
-  // Square playable field wearing a classic green grid — a fixed-size cell repeated across the
-  // field so the grid density stays constant regardless of how much the island has shrunk.
-  const gridTex = getGridTexture();
-  gridTex.repeat.set(n, n);
-  const groundMat = new THREE.MeshStandardMaterial({ map: gridTex, roughness: 1, metalness: 0 });
+  // Square playable field wearing the painted ground texture.
+  const groundMat = new THREE.MeshStandardMaterial({ map: PAINTED.floor.tex, roughness: 1, metalness: 0 });
   const sideMat = MAP_MATS.cliff;
   const base = new THREE.Mesh(
     new THREE.BoxGeometry(n, 0.64, n),
