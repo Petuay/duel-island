@@ -11,8 +11,8 @@ app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: res => res.setHeader('Cache-Control', 'no-cache')
 }));
 
-const POWER_PICK_DURATION = 12000; // ms to choose 1 of 2 latent powers (once, at match start)
-const CARD_PICK_DURATION = 10000; // ms to choose 1 of 3 dealt cards
+const POWER_PICK_DURATION = 15000; // ms to choose 1 of 2 latent powers (once, at match start)
+const CARD_PICK_DURATION = 15000; // ms to choose 1 of 3 dealt cards
 const PLACE_DURATION = 20000; // ms to walk, aim & aim the chosen card
 const NEXT_ROUND_DELAY = 3000; // pause after reveal before next round starts
 const HIT_WIDTH = 0.3; // base perpendicular tolerance of a shot
