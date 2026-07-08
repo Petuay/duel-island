@@ -138,10 +138,11 @@ const CARDS = [
   { id: 'ghost', emoji: '👻', name: 'กระสุนผี', desc: 'กระสุนทะลุทุกอย่าง สิ่งกีดขวางก็ทะลุ โดนคนแล้วก็วิ่งต่อ เก็บทุกคนในแนวเดียวกัน' },
   { id: 'scapegoat', emoji: '🔀', name: 'ตัวตายตัวแทน', desc: 'ถ้ารอบนี้กำลังจะโดนยิง สุ่มสลับตำแหน่งกับผู้เล่นคนอื่น (สลับกับคนยิงหรือกับตัวเองก็ได้!)' },
   { id: 'static', emoji: '🔌', name: 'ไฟฟ้าสถิต', desc: 'ไม่ยิงปืน แต่ปล่อยไฟช็อตระเบิดรอบตัวเอง 3×3 ฆ่าทุกคนที่ยืนใกล้' },
-  { id: 'kneebrace', emoji: '🦵', name: 'ไม้พยุงเข่า', desc: 'ถ้าโดนยิงรอบนี้จะไม่ตาย แต่ตาถัดไปจะขยับตำแหน่งไม่ได้' }
+  { id: 'kneebrace', emoji: '🦵', name: 'ไม้พยุงเข่า', desc: 'ถ้าโดนยิงรอบนี้จะไม่ตาย แต่ตาถัดไปจะขยับตำแหน่งไม่ได้' },
+  { id: 'lightningrod', emoji: '🗼', name: 'สายล่อฟ้า', desc: 'พื้นที่: วางเสาล่อฟ้า 1 จุด กระสุนที่พุ่งเข้าใกล้ในระยะ 4×4 จะถูกเบี่ยงวิถีโค้งเข้าหาเสา ยิ่งใกล้ยิ่งเบี่ยงแรง' }
 ];
 const cardById = id => CARDS.find(c => c.id === id) || null;
-const AREA_CARD_IDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage']);
+const AREA_CARD_IDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage', 'lightningrod']);
 const isAreaCard = id => AREA_CARD_IDS.has(id);
 let myCardArea = null;  // where I placed my area card this round
 let myCycloneAngle = null; // ไซโคลน: chosen sweep direction (radians), once position is locked
@@ -360,6 +361,7 @@ function buildGuide() {
     'chainshare', 'gambler', 'standalone'];
   let html = '<div class="guideHead">🃏 การ์ดพลัง (สุ่มแจกเลือก 1 จาก 3 ทุกรอบ)</div>';
   CARDS.forEach(c => {
+    if (c.id === 'wall') return; // temporarily pulled from the deal pool, don't list it as obtainable
     html += `<div class="guideItem"><span class="gEmoji">${c.emoji}</span>
       <span><b>${c.name}</b> — ${c.desc}</span></div>`;
   });
@@ -1486,6 +1488,7 @@ function applyGhostTint(group, opacity) {
 const THUNDER_HALF_C = 1.0;
 const ICECAGE_HALF_C = 1.5;
 const STATIC_HALF_C = 1.5; // ไฟฟ้าสถิต blast radius (mirrors server STATIC_HALF)
+const ROD_HALF_C = 2; // สายล่อฟ้า influence-zone half-size (mirrors server ROD_HALF)
 let areaMarker = null;      // my own placement ghost during the placement phase
 let obstacleMeshes = [];    // reveal-phase obstacle meshes
 
@@ -1493,7 +1496,8 @@ function areaBox(type, x, z, extra = {}) {
   if (type === 'wall') {
     return { type, x, z, rot: extra.rot || 0, halfLen: 1.5, halfWid: 0.5 };
   }
-  const h = type === 'icecage' ? ICECAGE_HALF_C : (type === 'thunder' ? THUNDER_HALF_C : 0.5);
+  const h = type === 'icecage' ? ICECAGE_HALF_C : (type === 'thunder' ? THUNDER_HALF_C
+    : (type === 'lightningrod' ? ROD_HALF_C : 0.5));
   return { type, x, z, minX: x - h, maxX: x + h, minZ: z - h, maxZ: z + h };
 }
 
@@ -1518,6 +1522,18 @@ function makeObstacleMesh(o, ghost) {
     const tint = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2),
       new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true, opacity: ghost ? 0.18 : 0.28, depthWrite: false }));
     tint.rotation.x = -Math.PI / 2; tint.position.y = 0.02; g.add(tint);
+  } else if (o.type === 'lightningrod') {
+    // a tall glowing pole + a faint square marking its 4x4 pull zone on the ground
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 1.6, 8),
+      new THREE.MeshStandardMaterial({ color: 0x8a95a8, metalness: 0.6, roughness: 0.4 }));
+    pole.position.y = 0.8; g.add(pole);
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 12),
+      new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0xffe066, emissiveIntensity: 1.1 }));
+    orb.position.y = 1.65; g.add(orb);
+    const half = ROD_HALF_C;
+    const tint = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2),
+      new THREE.MeshBasicMaterial({ color: 0xffe066, transparent: true, opacity: ghost ? 0.12 : 0.18, depthWrite: false }));
+    tint.rotation.x = -Math.PI / 2; tint.position.y = 0.02; g.add(tint);
   }
   if (ghost) applyGhostTint(g, 0.5);
   g.position.set(o.x, 0, o.z);
@@ -1534,6 +1550,19 @@ function clearObstacles() { obstacleMeshes.forEach(m => scene.remove(m)); obstac
 function buildObstacles(list) {
   clearObstacles();
   (list || []).forEach(o => { const m = makeObstacleMesh(o, false); scene.add(m); obstacleMeshes.push(m); });
+}
+
+// สายล่อฟ้า rods aren't bullet obstacles (they only bend paths), so the server keeps them out
+// of `obstacles` — rendered here as their own reveal-phase list instead.
+let rodMeshes = [];
+function clearRodMeshes() { rodMeshes.forEach(m => scene.remove(m)); rodMeshes = []; }
+function buildLightningRods(list) {
+  clearRodMeshes();
+  (list || []).forEach(r => {
+    const m = makeObstacleMesh(areaBox('lightningrod', r.x, r.z), false);
+    scene.add(m);
+    rodMeshes.push(m);
+  });
 }
 
 // ---------- ไซโคลน placement ghost (point + direction, not a placed box) ----------
@@ -1962,6 +1991,7 @@ socket.on('roundStart', data => {
   clearAreaMarker();
   clearCycloneGhost();
   clearObstacles();
+  clearRodMeshes();
   clearEyeTrail();
   roster = data.roster || [];
   roster.forEach(pl => playerInfo.set(pl.id, { name: pl.name, color: pl.color }));
@@ -2332,6 +2362,7 @@ function clearRevealMeshes() {
   fxBarriers.forEach(b => scene.remove(b.group)); fxBarriers = [];
   revealDecals.forEach(d => scene.remove(d)); revealDecals = [];
   clearObstacles();
+  clearRodMeshes();
   zoomFocus = null;
   if (scapegoatFreeze && scapegoatFreeze.beam) scene.remove(scapegoatFreeze.beam.mesh);
   scapegoatFreeze = null;
@@ -2400,7 +2431,8 @@ const CARD_INSTRUCTIONS = {
   wall: '🌳 คลิกซ้ายวางแถวต้นไม้ • คลิกขวาหมุนทิศ 45° ต่อครั้ง',
   thunder: '⚡ คลิกซ้ายเพื่อเลือกจุดที่จะให้ฟ้าผ่าลง',
   firework: '🌋 คลิกซ้ายเพื่อวางภูเขาไฟบนสนาม',
-  icecage: '❄️ คลิกซ้ายเพื่อวางโซนแช่แข็ง 3×3'
+  icecage: '❄️ คลิกซ้ายเพื่อวางโซนแช่แข็ง 3×3',
+  lightningrod: '🗼 คลิกซ้ายเพื่อวางเสาล่อฟ้า กระสุนที่พุ่งเข้าใกล้จะโค้งเข้าหาเสา'
 };
 function showCardInstructionBanner() {
   clearTimeout(cardInstructionTimer);
@@ -2525,6 +2557,7 @@ socket.on('roundResult', data => {
   clearOtherFrozenMarkers();
   if (myFrozenZoneMarker) { scene.remove(myFrozenZoneMarker); myFrozenZoneMarker = null; }
   buildObstacles(data.obstacles);
+  buildLightningRods(data.lightningRods);
   // กรงหิมะ: flash an ice burst at every zone that actually froze someone this round, for everyone
   (data.icecages || []).forEach(c => { if (c.caughtIds && c.caughtIds.length) spawnIcecageBlast(c.x, c.z); });
 

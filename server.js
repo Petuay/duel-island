@@ -24,9 +24,11 @@ const SHRINK_FACTOR = 0.8;
 
 // ---- Special cards (dealt one per player each round) ----
 // self-buff cards (always applied to the caster) + area cards (placed on the ground)
-const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror', 'wall', 'cyclone', 'firework', 'icecage',
-  'ghost', 'scapegoat', 'static', 'kneebrace'];
-const AREA_CARDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage']);
+// NOTE: 'wall' (ต้นไม้ให้ร่ม) is temporarily pulled from the deal pool below — kept in
+// AREA_CARDS/obstacle code intact for a future rework, just not dealt for now.
+const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror', 'cyclone', 'firework', 'icecage',
+  'ghost', 'scapegoat', 'static', 'kneebrace', 'lightningrod'];
+const AREA_CARDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage', 'lightningrod']);
 // keep the overall deal split at 75% self-buff / 25% area, regardless of how many of each exist:
 // every card's weight = its category's target share divided evenly among that category's cards.
 const SELF_CARD_SHARE = 0.75;
@@ -62,6 +64,9 @@ const CYCLONE_HALF_WIDTH = 1.0; // perpendicular half-width of the storm's path 
 const CYCLONE_PULL = 2; // blocks a caught player is dragged along the storm's direction
 const ICECAGE_HALF = 1.5; // กรงหิมะ: half-size of the 3x3 freeze zone
 const STATIC_HALF = 1.5; // ไฟฟ้าสถิต: half-size of the 3x3 self-centred blast (replaces the shot)
+const ROD_HALF = 2; // สายล่อฟ้า: half-size of the 4x4 influence box around a placed rod
+const ROD_STEP = 0.4; // สายล่อฟ้า: bullets are sub-stepped this far at a time while rods are in play
+const ROD_MAX_BEND = 0.35; // สายล่อฟ้า: max radians a bullet's heading nudges per step at point-blank range
 
 // build an obstacle for a bullet-interactive area card at (x,z) — wall is a rotatable
 // oriented rectangle (OBB), firework is a small axis-aligned trigger box
@@ -651,6 +656,7 @@ class Room {
     const cards = []; // every card cast this round (for the reveal card-log panel)
     const obstacles = []; // bullet-interactive area cards (wall / firework)
     const icecages = []; // กรงหิมะ zones (not bullet-interactive — freezes movement instead)
+    const lightningRods = []; // สายล่อฟ้า: poles that bend nearby bullets, not a hard obstacle
     for (const caster of alive) {
       if (caster.cardBanked) {
         // นักสะสม: this round's pick is saved for later — no effect, no placement, no card-log entry
@@ -683,6 +689,11 @@ class Room {
         }
         if (cardId === 'thunder') {
           resolveArea(caster); // strike itself happens on the caster's own firing-order turn
+          continue;
+        }
+        if (cardId === 'lightningrod') {
+          const a = resolveArea(caster);
+          lightningRods.push({ casterId: caster.id, x: a.x, z: a.z });
           continue;
         }
         // self-buff cards
@@ -749,6 +760,53 @@ class Room {
 
     const activeCardsIncludes = (p, id) => !p.cardBanked && (p.card === id || p.bankedCard === id);
 
+    // สายล่อฟ้า: nudge a heading toward any placed rod whose 4x4 box the point sits in — closer
+    // means a stronger pull. No-op (returns ang unchanged) whenever no rod is on the field.
+    const bendAngle = (x, z, ang) => {
+      if (!lightningRods.length) return ang;
+      let px = 0, pz = 0;
+      for (const rod of lightningRods) {
+        const dx = rod.x - x, dz = rod.z - z;
+        if (Math.abs(dx) > ROD_HALF || Math.abs(dz) > ROD_HALF) continue;
+        const dist = Math.hypot(dx, dz);
+        if (dist < 0.05) continue;
+        const closeness = 1 - Math.min(1, dist / (ROD_HALF * Math.SQRT2));
+        const strength = ROD_MAX_BEND * closeness;
+        px += (dx / dist) * strength;
+        pz += (dz / dist) * strength;
+      }
+      if (px === 0 && pz === 0) return ang;
+      const dx2 = Math.sin(ang) + px, dz2 = Math.cos(ang) + pz;
+      const len = Math.hypot(dx2, dz2) || 1;
+      return Math.atan2(dx2 / len, dz2 / len);
+    };
+
+    // like castSegment, but when a lightning rod is on the field the leg is walked in small
+    // sub-steps (bending the heading each step) instead of one straight cast — produces a
+    // curving polyline of micro-segments. Zero extra cost/behavior change when no rod is out.
+    const castBentPath = (ox, oz, ang, shooter, selfId, excludeIds, excludeObs, dodgeOut, maxRange, bypass) => {
+      if (!lightningRods.length) {
+        const r = castSegment(ox, oz, ang, shooter, selfId, excludeIds, excludeObs, dodgeOut, maxRange, bypass);
+        return { r, path: [{ x: ox, z: oz }, { x: r.x, z: r.z }], finalAngle: ang };
+      }
+      let x = ox, z = oz, curAng = ang, travelled = 0;
+      const path = [{ x, z }];
+      const capRange = maxRange != null ? maxRange : 60;
+      for (let i = 0; i < 400 && travelled < capRange; i++) {
+        curAng = bendAngle(x, z, curAng);
+        const stepLen = Math.min(ROD_STEP, capRange - travelled);
+        const r = castSegment(x, z, curAng, shooter, selfId, excludeIds, excludeObs, dodgeOut, stepLen, bypass);
+        if (r.type !== 'miss' || r.exited) {
+          path.push({ x: r.x, z: r.z });
+          return { r, path, finalAngle: curAng };
+        }
+        x = r.x; z = r.z;
+        travelled += stepLen;
+        path.push({ x, z });
+      }
+      return { r: { type: 'miss', hitId: null, x, z, exited: false }, path, finalAngle: curAng };
+    };
+
     // resolve one bullet (bounces / MAN ricochets / Mirror reflections / area obstacles), collecting kills + events.
     // `bypass` (นักพนัน) makes the shot ignore the victim's protective card/power entirely.
     const fireBullet = (shooter, a0, bounces, kills, ev, maxRange, bypass) => {
@@ -757,9 +815,12 @@ class Room {
       const touchedObs = new Set();
       let ox = shooter.x, oz = shooter.z, ang = a0, bouncesLeft = bounces, selfId = shooter.id;
       for (let step = 0; step < 8; step++) {
-        const r = castSegment(ox, oz, ang, shooter, selfId, touched, touchedObs, ev.dodges, maxRange, bypass);
-        const seg = { x1: ox, z1: oz, x2: r.x, z2: r.z, hitId: null };
-        segments.push(seg);
+        const { r, path, finalAngle } = castBentPath(ox, oz, ang, shooter, selfId, touched, touchedObs, ev.dodges, maxRange, bypass);
+        for (let k = 0; k < path.length - 1; k++) {
+          segments.push({ x1: path[k].x, z1: path[k].z, x2: path[k + 1].x, z2: path[k + 1].z, hitId: null });
+        }
+        const seg = segments[segments.length - 1];
+        ang = finalAngle; // สายล่อฟ้า: bounce/ricochet physics below reflects off the bent incoming angle
         if (r.type === 'wall') { seg.wall = true; break; } // ต้นไม้ให้ร่ม blocks the shot
         if (r.type === 'firework') { // ปอมเปอี blows up, killing everyone in a 3x3 block
           seg.firework = true; touchedObs.add(r.obs.i);
@@ -1043,6 +1104,7 @@ class Room {
         : { type: o.type, x: o.x, z: o.z, minX: o.minX, maxX: o.maxX, minZ: o.minZ, maxZ: o.maxZ }),
       cyclones,
       icecages,
+      lightningRods,
       standaloneBlocks,
       eliminated,
       survivors: this.aliveIds()
