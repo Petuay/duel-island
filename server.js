@@ -147,11 +147,9 @@ const SCAPEGOAT_PAUSE = 2600; // reveal freeze while the ตัวตายต�
 // to fully finish travelling before the next one fires — both can add real time beyond the
 // naive per-shot formula below, especially on a large island with slow-travelling bullets
 const CAMERA_SETTLE_SLACK = 5500; // bumped when bullet speed dropped 30% (bullets travel longer now)
-// a shot that pulls the camera in on a hidden power (or mirror) — the reveal waits for it
+// a shot that pulls the camera in — only The Matrix still does now — the reveal waits for it
 function shotHasZoom(s) {
-  return !!(s.drunken || s.revenge || s.chainshare || (s.dodges && s.dodges.length) ||
-    (s.manDeflects && s.manDeflects.length) || (s.mirrors && s.mirrors.length) ||
-    (s.graze && s.graze.length) || (s.gambler && s.gambler.length));
+  return !!(s.dodges && s.dodges.length);
 }
 // ตัวตายตัวแทน freezes the reveal to show its swap UI — needs a bigger pause than a normal zoom
 function shotHasScapegoat(s) { return !!(s.scapegoat && s.scapegoat.length); }
@@ -255,7 +253,7 @@ class Room {
     this.players.set(id, {
       id, name, color, x: 0, z: 0, angle: 0,
       alive: true, ready: false, isBot: true,
-      char: BOT_CHAR_ID
+      char: BOT_CHAR_ID, totalScore: 0
     });
   }
 
@@ -527,13 +525,18 @@ class Room {
 
     this.roundEndsAt = Date.now() + PLACE_DURATION;
     const roster = aliveList.map(p => ({ id: p.id, name: p.name, color: p.color }));
+    // กรงหิมะ: let EVERYONE see whose movement is pinned this round, not just the frozen player
+    const frozenPlayers = aliveList
+      .filter(p => p.activeFrozenZone)
+      .map(p => ({ id: p.id, zone: p.activeFrozenZone }));
     io.to(this.code).emit('placeStart', {
       round: this.round,
       islandSize: this.islandSize,
       duration: PLACE_DURATION,
       endsAt: this.roundEndsAt,
       bounds: half,
-      roster
+      roster,
+      frozenPlayers
     });
     for (const p of aliveList) {
       if (!p.isBot) io.to(p.id).emit('yourCard', { card: p.card, bankedCard: p.bankedCard || null, cardBanked: !!p.cardBanked, frozenZone: p.activeFrozenZone || null });
@@ -1061,10 +1064,12 @@ class Room {
     const survivors = this.aliveIds();
     if (survivors.length <= 1) {
       this.state = 'ended';
+      this.matchesPlayed = (this.matchesPlayed || 0) + 1;
       const winner = survivors[0] ? this.players.get(survivors[0]) : null;
       io.to(this.code).emit('gameOver', {
         winner: winner ? { id: winner.id, name: winner.name, char: winner.char, color: winner.color } : null,
-        standings: this.buildStandings(winner)
+        standings: this.buildStandings(winner),
+        matchesPlayed: this.matchesPlayed
       });
       return;
     }
@@ -1074,20 +1079,27 @@ class Room {
   }
 
   // final scoreboard: winner first, then latest-eliminated first (rank by survival),
-  // ties broken by kills. Each row carries what the end screen renders.
+  // ties broken by kills. Each row carries what the end screen renders. Also tallies
+  // cumulative room score (placement points + kills), so it keeps building up across
+  // repeated matches in the same room ("เล่นในห้องเดิมต่อเนื่อง") until the room closes.
   buildStandings(winner) {
     const survivalRank = p => (p === winner ? Infinity : (p.eliminatedRound || 0));
     const ranked = [...this.players.values()].sort((a, b) => {
       const d = survivalRank(b) - survivalRank(a);
       return d !== 0 ? d : (b.kills || 0) - (a.kills || 0);
     });
-    return ranked.map((p, i) => ({
-      rank: i + 1,
-      id: p.id, name: p.name, char: p.char, color: p.color, isBot: !!p.isBot,
-      kills: p.kills || 0,
-      roundReached: p === winner ? this.round : (p.eliminatedRound || this.round),
-      isWinner: p === winner
-    }));
+    return ranked.map((p, i) => {
+      const kills = p.kills || 0;
+      const placementPoints = Math.max(0, ranked.length - i - 1);
+      p.totalScore = (p.totalScore || 0) + placementPoints + kills;
+      return {
+        rank: i + 1,
+        id: p.id, name: p.name, char: p.char, color: p.color, isBot: !!p.isBot,
+        kills, roundReached: p === winner ? this.round : (p.eliminatedRound || this.round),
+        isWinner: p === winner,
+        matchScore: placementPoints + kills, totalScore: p.totalScore
+      };
+    });
   }
 
   resetToLobby() {
@@ -1137,7 +1149,8 @@ io.on('connection', socket => {
       x: 0, z: 0, angle: 0,
       alive: true,
       ready: false,
-      char: 'buddha'
+      char: 'buddha',
+      totalScore: 0
     });
     socket.emit('joined', { code: room.code, selfId: socket.id });
     room.broadcastRoom();

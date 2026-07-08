@@ -157,11 +157,9 @@ const POWER_PAUSE = 1900; // extra gap after a shot that triggers a power/mirror
 const SCAPEGOAT_PAUSE = 2600; // reveal freeze while the ตัวตายตัวแทน swap UI + warp plays (mirrors server)
 const BULLET_SPEED = 8.4; // units/sec — dropped 30% from 12 for a slower, more readable bullet
 const REVENGE_RISE_MS = 600; // จิตพยาบาท: corpse stands back up before firing its death-shots
-// does this shot pull the camera in on a power/mirror? (must match server shotHasZoom)
+// does this shot pull the camera in? only The Matrix still zooms now (must match server shotHasZoom)
 function shotHasZoom(s) {
-  return !!(s.drunken || s.revenge || s.chainshare || (s.dodges && s.dodges.length) ||
-    (s.manDeflects && s.manDeflects.length) || (s.mirrors && s.mirrors.length) ||
-    (s.graze && s.graze.length) || (s.gambler && s.gambler.length));
+  return !!(s.dodges && s.dodges.length);
 }
 function shotHasScapegoat(s) { return !!(s.scapegoat && s.scapegoat.length); }
 
@@ -430,7 +428,7 @@ socket.on('roomUpdate', data => {
   }
 });
 
-socket.on('gameOver', ({ winner, standings }) => {
+socket.on('gameOver', ({ winner, standings, matchesPlayed }) => {
   showScreen('gameover');
   const winnerBox = $('winnerBox') || document.querySelector('.winnerBox');
   if (winner) {
@@ -447,12 +445,15 @@ socket.on('gameOver', ({ winner, standings }) => {
     winnerWantedChar = null;
     if (winnerModel) { winnerScene.remove(winnerModel); winnerModel = null; }
   }
-  renderStandings(standings || []);
+  renderStandings(standings || [], matchesPlayed || 1);
   $('btnPlayAgain').classList.toggle('hidden', !isHost);
   $('gameOverWait').classList.toggle('hidden', isHost);
 });
 
-function renderStandings(standings) {
+function renderStandings(standings, matchesPlayed) {
+  // แต้มสะสม only means something once more than one match has been played in this room
+  const showTotal = matchesPlayed > 1;
+  $('standingsTotalHead').classList.toggle('hidden', !showTotal);
   const body = $('standingsBody');
   body.innerHTML = '';
   standings.forEach(s => {
@@ -462,7 +463,8 @@ function renderStandings(standings) {
     tr.innerHTML = `<td class="stRank">${medal}</td>
       <td class="stName"><span class="orderDot" style="background:${s.color}"></span>${s.isBot ? '🤖 ' : ''}${escapeHtml(s.name)}${s.id === selfId ? ' (คุณ)' : ''}</td>
       <td class="stRound">${s.roundReached}</td>
-      <td class="stKills">${s.kills}</td>`;
+      <td class="stKills">${s.kills}</td>
+      <td class="stTotal ${showTotal ? '' : 'hidden'}">${s.totalScore}</td>`;
     body.appendChild(tr);
   });
 }
@@ -1821,6 +1823,9 @@ socket.on('powerPickStart', data => {
   currentRound = 0;
   clearRevealMeshes();
   clearSpectatorMeshes();
+  clearOtherFrozenMarkers();
+  if (myFrozenZoneMarker) { scene.remove(myFrozenZoneMarker); myFrozenZoneMarker = null; }
+  myFrozenZone = null;
   if (selfMesh) { scene.remove(selfMesh); selfMesh = null; }
   if (selfLaser) { scene.remove(selfLaser); selfLaser = null; }
 
@@ -1829,6 +1834,7 @@ socket.on('powerPickStart', data => {
   spectating = false;
   selfReady = false;
   myPower = null;
+  updateMyPowerBadge();
   myBankedCard = null;
   clearEyeTrail();
   roster = data.roster || [];
@@ -1855,7 +1861,18 @@ socket.on('yourPowers', data => {
   buildPowerOverlay(data.choices || []);
 });
 
-socket.on('powerPicked', data => { myPower = data.power; });
+socket.on('powerPicked', data => { myPower = data.power; updateMyPowerBadge(); });
+
+// persistent top-left badge showing my own latent power for the rest of the match
+function updateMyPowerBadge() {
+  const el = $('myPowerBadge');
+  if (!el) return;
+  if (!myPower) { el.classList.add('hidden'); return; }
+  const full = POWER_DESC[myPower] || myPower;
+  const name = full.split(' — ')[0];
+  el.innerHTML = `<span class="mpbEmoji">${POWER_EMOJI[myPower] || '⚡'}</span><span>${name}</span>`;
+  el.classList.remove('hidden');
+}
 
 function buildPowerOverlay(choices) {
   $('choiceTitle').textContent = '⚡ เลือกพลังแฝง 1 อย่าง';
@@ -1873,6 +1890,7 @@ function buildPowerOverlay(choices) {
     div.addEventListener('click', () => {
       if (phase !== 'powerpick') return;
       myPower = pid;
+      updateMyPowerBadge();
       socket.emit('pickPower', { power: pid });
       [...el.children].forEach(ch => ch.classList.remove('chosen'));
       div.classList.add('chosen');
@@ -2014,6 +2032,7 @@ socket.on('placeStart', data => {
   $('choiceOverlay').classList.add('hidden');
   $('orderPanel').classList.add('hidden');
   clearInterval(orderShuffleTimer);
+  buildOtherFrozenMarkers(data.frozenPlayers); // กรงหิมะ: everyone sees who's pinned this round
 
   if (spectating) {
     spectateCamTarget.set(0, data.islandSize * 0.85 + 6, data.islandSize * 0.6 + 4);
@@ -2051,34 +2070,54 @@ function placementCard() {
   return (myBankedCard && isAreaCard(myBankedCard)) ? myBankedCard : myCard;
 }
 
-// กรงหิมะ: a persistent ground marker showing my own movement clamp this round, if frozen
-let frozenZoneMarker = null;
-function updateFrozenZoneMarker() {
-  if (frozenZoneMarker) { scene.remove(frozenZoneMarker); frozenZoneMarker = null; }
-  if (!myFrozenZone) return;
-  const z = myFrozenZone;
+// กรงหิมะ / ไม้พยุงเข่า: ground marker for a frozen movement-clamp zone — pure builder, reused
+// for both "my own" clamp and (now) every other frozen player so everyone can see it happen.
+function makeFrozenZoneMarker(z, name) {
+  const g = new THREE.Group();
   // ไม้พยุงเข่า: pinned in place (a near-zero zone) — show an amber "no move" ring, not ice crystals
   if (z.knee) {
-    const g = new THREE.Group();
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.72, 28),
       new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
     ring.rotation.x = -Math.PI / 2; ring.position.y = 0.03; g.add(ring);
-    g.position.set((z.minX + z.maxX) / 2, 0, (z.minZ + z.maxZ) / 2);
-    scene.add(g);
-    frozenZoneMarker = g;
-    return;
+  } else {
+    const w = z.maxX - z.minX, d = z.maxZ - z.minZ;
+    [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(([sx, sz]) => {
+      placeGlbProp(icecrystalTemplate, g, sx * (w / 2) * 0.85, sz * (d / 2) * 0.85, 0.9);
+    });
+    const tint = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
+      new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true, opacity: 0.16, depthWrite: false }));
+    tint.rotation.x = -Math.PI / 2; tint.position.y = 0.02; g.add(tint);
   }
-  const w = z.maxX - z.minX, d = z.maxZ - z.minZ;
-  const g = new THREE.Group();
-  [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(([sx, sz]) => {
-    placeGlbProp(icecrystalTemplate, g, sx * (w / 2) * 0.85, sz * (d / 2) * 0.85, 0.9);
-  });
-  const tint = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
-    new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true, opacity: 0.16, depthWrite: false }));
-  tint.rotation.x = -Math.PI / 2; tint.position.y = 0.02; g.add(tint);
+  if (name) {
+    const sprite = makeNameSprite('🥶 ' + name, '#7ec8ff');
+    sprite.position.set(0, 1.3, 0);
+    g.add(sprite);
+  }
   g.position.set((z.minX + z.maxX) / 2, 0, (z.minZ + z.maxZ) / 2);
-  scene.add(g);
-  frozenZoneMarker = g;
+  return g;
+}
+let myFrozenZoneMarker = null; // kept separately since it also gates my own movement clamp
+function updateFrozenZoneMarker() {
+  if (myFrozenZoneMarker) { scene.remove(myFrozenZoneMarker); myFrozenZoneMarker = null; }
+  if (!myFrozenZone) return;
+  myFrozenZoneMarker = makeFrozenZoneMarker(myFrozenZone, null);
+  scene.add(myFrozenZoneMarker);
+}
+// visible to everyone, not just the frozen player — rebuilt fresh each placement phase
+let otherFrozenMarkers = [];
+function clearOtherFrozenMarkers() {
+  otherFrozenMarkers.forEach(g => scene.remove(g));
+  otherFrozenMarkers = [];
+}
+function buildOtherFrozenMarkers(frozenPlayers) {
+  clearOtherFrozenMarkers();
+  (frozenPlayers || []).forEach(p => {
+    if (p.id === selfId) return; // my own is drawn separately by updateFrozenZoneMarker
+    const info = playerInfo.get(p.id);
+    const g = makeFrozenZoneMarker(p.zone, info ? info.name : '?');
+    scene.add(g);
+    otherFrozenMarkers.push(g);
+  });
 }
 
 // ---------- เนตรทิพย์ (clairvoyant) footprint trail ----------
@@ -2450,7 +2489,11 @@ socket.on('roundResult', data => {
   renderPowerLog();         // keep the revealed-powers list up to date (left)
   clearAreaMarker();        // remove my placement ghost; show the real obstacles instead
   clearCycloneGhost();
+  clearOtherFrozenMarkers();
+  if (myFrozenZoneMarker) { scene.remove(myFrozenZoneMarker); myFrozenZoneMarker = null; }
   buildObstacles(data.obstacles);
+  // กรงหิมะ: flash an ice burst at every zone that actually froze someone this round, for everyone
+  (data.icecages || []).forEach(c => { if (c.caughtIds && c.caughtIds.length) spawnIcecageBlast(c.x, c.z); });
 
   // players caught in a ไซโคลน sweep this round start at their pre-storm position and
   // glide to their final one during the cyclone reveal intro (see setupCycloneIntro below)
@@ -2734,15 +2777,16 @@ function updateScapegoatFreeze(dt) {
 }
 
 // reveal a triggered hidden power: zoom in + a floating label; also the Mirror card reflect
+// camera zoom-in is reserved for The Matrix only now — every other power/mirror/card event
+// still gets its floating label + power-log entry, just without pulling the camera in
 function handlePowerEvents(s) {
   if (s.drunken) {
     const e = revealMeshMap.get(s.shooterId);
-    if (e) { focusOn(e, 2500); floatLabel(e.x, e.z, 2.5 * e.size, POWER_EMOJI.drunken + ' เมาดิบ!', '#ffd36b'); revealPower(s.shooterId, 'drunken'); }
+    if (e) { floatLabel(e.x, e.z, 2.5 * e.size, POWER_EMOJI.drunken + ' เมาดิบ!', '#ffd36b'); revealPower(s.shooterId, 'drunken'); }
   }
   if (s.revenge) {
     const e = revealMeshMap.get(s.shooterId);
     if (e) {
-      focusOn(e, 2600);
       e.risingUntil = revealClock + REVENGE_RISE_MS; // stand the corpse back up before it fires
       floatLabel(e.x, e.z, 2.3, POWER_EMOJI.revenger + ' จิตพยาบาท!', '#c9b3ff');
       revealPower(s.shooterId, 'revenger');
@@ -2751,7 +2795,7 @@ function handlePowerEvents(s) {
   (s.dodges || []).forEach(id => {
     const e = revealMeshMap.get(id);
     if (!e) return;
-    focusOn(e, 2600);
+    focusOn(e, 2600); // The Matrix: the one power reveal that still zooms the camera in
     e.dodgeUntil = revealClock + 1400;
     floatLabel(e.x, e.z, 2.6 * e.size, POWER_EMOJI.matrix + ' MATRIX!', '#9fe0ff');
     revealPower(id, 'matrix');
@@ -2759,7 +2803,6 @@ function handlePowerEvents(s) {
   (s.manDeflects || []).forEach(id => {
     const e = revealMeshMap.get(id);
     if (!e) return;
-    focusOn(e, 2500);
     floatLabel(e.x, e.z, 2.6 * e.size, POWER_EMOJI.man + ' แผ่นหลังลูกผู้ชาย!', '#ffcf7a');
     revealPower(id, 'man');
   });
@@ -2767,13 +2810,12 @@ function handlePowerEvents(s) {
   (s.mirrors || []).forEach(id => {
     const e = revealMeshMap.get(id);
     if (!e) return;
-    focusOn(e, 2200);
     floatLabel(e.x, e.z, 2.6 * e.size, '🪞 สะท้อน!', '#bfe9ff');
   });
   // แชร์ลูกโซ่: the killer's power spawns a ลูกซองแฉก out of a corpse
   if (s.chainshare) {
     const e = revealMeshMap.get(s.shooterId); // shooterId here is the corpse the spread erupts from
-    if (e) { focusOn(e, 2400); floatLabel(e.x, e.z, 2.3, POWER_EMOJI.chainshare + ' แชร์ลูกโซ่!', '#caa8ff'); }
+    if (e) floatLabel(e.x, e.z, 2.3, POWER_EMOJI.chainshare + ' แชร์ลูกโซ่!', '#caa8ff');
     if (s.sourceId) revealPower(s.sourceId, 'chainshare');
   }
   // นักพนัน: this shot punched through the victim's defenses
@@ -2802,6 +2844,16 @@ function grazeVictim(id) {
   entry.grazeShown = true;
   spawnImpact(new THREE.Vector3(entry.x, 0.5, entry.z));
   floatLabel(entry.x, entry.z, 2.4 * entry.size, '🦵 ไม้พยุงเข่า!', '#a6e5b4');
+}
+
+// กรงหิมะ: icy burst where the freeze zone lands, visible to everyone during the reveal
+function spawnIcecageBlast(x, z) {
+  spawnFlash(x, 0.8, z, 2.6, 0xbfe9ff, 0.5);
+  spawnFlash(x, 1.3, z, 1.6, 0xffffff, 0.4);
+  for (let i = 0; i < 10; i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * ICECAGE_HALF_C;
+    spawnFlash(x + Math.cos(a) * r, 0.35, z + Math.sin(a) * r, 0.5, 0xd6f1ff, 0.35);
+  }
 }
 
 // ไฟฟ้าสถิต blast: crackling electric burst around the caster

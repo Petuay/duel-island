@@ -301,6 +301,14 @@ button.secondary:active { box-shadow: 0 2px 0 #d9902a; }
   padding: 5px 10px; cursor: pointer; box-shadow: 0 3px 8px rgba(30,60,100,0.2);
 }
 .guideBtn:hover { background: #fff; transform: none; box-shadow: 0 3px 8px rgba(30,60,100,0.2); }
+.myPowerBadge {
+  position: absolute; top: 50px; left: 12px; z-index: 6;
+  font-family: 'Baloo 2', sans-serif; font-weight: 700; font-size: 12px;
+  color: #4a3a7a; background: rgba(255,255,255,0.92); border: 2px solid #d8c6ff;
+  border-radius: 10px; padding: 5px 10px; box-shadow: 0 3px 8px rgba(120,80,220,0.25);
+  display: flex; align-items: center; gap: 5px;
+}
+.myPowerBadge .mpbEmoji { font-size: 15px; }
 .guidePanel {
   position: absolute; top: 44px; left: 12px; width: 224px; max-height: 46vh; overflow-y: auto;
   z-index: 7; pointer-events: auto;
@@ -403,7 +411,8 @@ button.secondary:active { box-shadow: 0 2px 0 #d9902a; }
 .standingsTable td { padding: 6px 6px; border-bottom: 1px solid #e8f0f8; color: #2b3a55; }
 .standingsTable .stName { display: flex; align-items: center; gap: 7px; font-weight: 600; }
 .standingsTable .stRank { font-size: 16px; width: 34px; }
-.standingsTable .stRound, .standingsTable .stKills { text-align: center; width: 64px; }
+.standingsTable .stRound, .standingsTable .stKills, .standingsTable .stTotal { text-align: center; width: 64px; }
+.standingsTable .stTotal { font-weight: 700; color: #d9781a; }
 .standingsWinner { background: #fff3dc; }
 .standingsWinner td { color: #d9781a; font-weight: 800; }
 .gameOverWait { color: #6d84a8; font-size: 13px; margin-top: 4px; }
