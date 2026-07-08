@@ -1259,7 +1259,7 @@ function getBloodTexture() {
   return bloodTextureCache;
 }
 
-let fxSprites = [], fxBeams = [], fxParticles = [], revealDecals = [], fxBullets = [], fxLabels = [];
+let fxSprites = [], fxBeams = [], fxParticles = [], revealDecals = [], fxBullets = [], fxLabels = [], fxBarriers = [];
 
 // hidden-power icons + a short label that floats up above a player when a power fires
 const POWER_EMOJI = { matrix: '🕶️', drunken: '🥴', revenger: '👻', man: '💪', clairvoyant: '👁️', collector: '🎒',
@@ -1371,6 +1371,28 @@ function spawnFlash(x, y, z, baseScale, color, duration) {
   sprite.scale.setScalar(baseScale);
   scene.add(sprite);
   fxSprites.push({ sprite, life: 0, duration: duration || 0.4, baseScale });
+}
+
+// กระจกหกด้าน: a big glowing barrier dome that flares up around the mirror-holder the moment
+// their thorn armour actually triggers (separate from the small approach-ring on the bullet itself)
+function spawnMirrorBarrier(x, z, size) {
+  const group = new THREE.Group();
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0xbfe9ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
+    depthWrite: false, blending: THREE.AdditiveBlending
+  });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.1 * size, 0.06, 8, 40), ringMat);
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+  const domeMat = new THREE.MeshBasicMaterial({
+    color: 0x9fd8ff, transparent: true, opacity: 0.3, side: THREE.DoubleSide,
+    depthWrite: false, blending: THREE.AdditiveBlending
+  });
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(1.1 * size, 20, 12, 0, Math.PI * 2, 0, Math.PI / 1.7), domeMat);
+  group.add(dome);
+  group.position.set(x, 0.05, z);
+  scene.add(group);
+  fxBarriers.push({ group, ring, dome, life: 0, duration: 1.1 });
 }
 
 // a round bullet that travels along a poly-line path (multiple segments = a bounce),
@@ -1582,6 +1604,16 @@ function updateFx(dt) {
     const t = b.life / b.duration;
     b.mesh.material.opacity = Math.max(0, 0.95 * (1 - t));
     if (t >= 1) { scene.remove(b.mesh); fxBeams.splice(i, 1); }
+  }
+  for (let i = fxBarriers.length - 1; i >= 0; i--) {
+    const b = fxBarriers[i];
+    b.life += dt;
+    const t = b.life / b.duration;
+    b.group.scale.setScalar(1 + t * 0.6);
+    const fade = Math.max(0, 1 - t);
+    b.ring.material.opacity = 0.85 * fade;
+    b.dome.material.opacity = 0.3 * fade;
+    if (t >= 1) { scene.remove(b.group); fxBarriers.splice(i, 1); }
   }
   for (let i = fxBullets.length - 1; i >= 0; i--) {
     const b = fxBullets[i];
@@ -2297,6 +2329,7 @@ function clearRevealMeshes() {
   fxParticles.forEach(f => scene.remove(f.points)); fxParticles = [];
   fxBullets.forEach(f => { scene.remove(f.mesh); scene.remove(f.glow); }); fxBullets = [];
   fxLabels.forEach(l => scene.remove(l.sp)); fxLabels = [];
+  fxBarriers.forEach(b => scene.remove(b.group)); fxBarriers = [];
   revealDecals.forEach(d => scene.remove(d)); revealDecals = [];
   clearObstacles();
   zoomFocus = null;
@@ -2811,6 +2844,7 @@ function handlePowerEvents(s) {
     const e = revealMeshMap.get(id);
     if (!e) return;
     floatLabel(e.x, e.z, 2.6 * e.size, '🪞 สะท้อน!', '#bfe9ff');
+    spawnMirrorBarrier(e.x, e.z, e.size);
   });
   // แชร์ลูกโซ่: the killer's power spawns a ลูกซองแฉก out of a corpse
   if (s.chainshare) {
