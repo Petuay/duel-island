@@ -1436,8 +1436,29 @@ function spawnSegmentBullet(color, segments, radius) {
   });
 }
 
-// ใครปักตะไคร้ VFX: bright bolt glow at the struck area plus sparks across the 2x2 zone
+// a jagged bolt falling from high overhead down to the strike point
+function spawnLightningBolt(x, z, topY) {
+  const segs = 7;
+  const pts = [];
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;
+    const y = topY * (1 - t);
+    const jitter = (i === 0 || i === segs) ? 0 : (Math.random() - 0.5) * 0.7;
+    pts.push(new THREE.Vector3(x + jitter, y, z + jitter));
+  }
+  const mat = new THREE.LineBasicMaterial({
+    color: 0xeaf6ff, transparent: true, opacity: 0.95,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  });
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+  scene.add(line);
+  fxBeams.push({ mesh: line, life: 0, duration: 0.3 });
+}
+
+// ใครปักตะไคร้ VFX: a bolt strikes down from the sky, plus a bright bolt glow at the struck
+// area and sparks across the 2x2 zone
 function spawnLightning(x, z) {
+  spawnLightningBolt(x, z, 16);
   spawnFlash(x, 1.5, z, 2.4, 0xaad4ff, 0.55);
   for (let i = 0; i < 9; i++) {
     const a = Math.random() * Math.PI * 2, r = Math.random() * THUNDER_HALF_C;
@@ -1523,17 +1544,13 @@ function makeObstacleMesh(o, ghost) {
       new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true, opacity: ghost ? 0.18 : 0.28, depthWrite: false }));
     tint.rotation.x = -Math.PI / 2; tint.position.y = 0.02; g.add(tint);
   } else if (o.type === 'lightningrod') {
-    // a tall glowing pole + a faint square marking its 4x4 pull zone on the ground
+    // just a tall glowing pole — the pull zone itself isn't shown
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 1.6, 8),
       new THREE.MeshStandardMaterial({ color: 0x8a95a8, metalness: 0.6, roughness: 0.4 }));
     pole.position.y = 0.8; g.add(pole);
     const orb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 12),
       new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0xffe066, emissiveIntensity: 1.1 }));
     orb.position.y = 1.65; g.add(orb);
-    const half = ROD_HALF_C;
-    const tint = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2),
-      new THREE.MeshBasicMaterial({ color: 0xffe066, transparent: true, opacity: ghost ? 0.12 : 0.18, depthWrite: false }));
-    tint.rotation.x = -Math.PI / 2; tint.position.y = 0.02; g.add(tint);
   }
   if (ghost) applyGhostTint(g, 0.5);
   g.position.set(o.x, 0, o.z);

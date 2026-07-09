@@ -66,7 +66,7 @@ const ICECAGE_HALF = 1.5; // กรงหิมะ: half-size of the 3x3 freeze 
 const STATIC_HALF = 1.5; // ไฟฟ้าสถิต: half-size of the 3x3 self-centred blast (replaces the shot)
 const ROD_HALF = 2; // สายล่อฟ้า: half-size of the 4x4 influence box around a placed rod
 const ROD_STEP = 0.4; // สายล่อฟ้า: bullets are sub-stepped this far at a time while rods are in play
-const ROD_MAX_BEND = 0.35; // สายล่อฟ้า: max radians a bullet's heading nudges per step at point-blank range
+const ROD_MAX_BEND = 0.18; // สายล่อฟ้า: max radians a bullet's heading nudges per step at point-blank range
 
 // build an obstacle for a bullet-interactive area card at (x,z) — wall is a rotatable
 // oriented rectangle (OBB), firework is a small axis-aligned trigger box
