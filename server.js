@@ -29,24 +29,39 @@ const SHRINK_FACTOR = 0.8;
 const CARD_IDS = ['gobig', 'gosmall', 'divine', 'bounce', 'thunder', 'mirror', 'cyclone', 'firework', 'icecage',
   'ghost', 'scapegoat', 'static', 'kneebrace', 'lightningrod'];
 const AREA_CARDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage', 'lightningrod']);
-// keep the overall deal split at 75% self-buff / 25% area, regardless of how many of each exist:
-// every card's weight = its category's target share divided evenly among that category's cards.
-const SELF_CARD_SHARE = 0.75;
+// area-card share starts at 30% (full-size map) and shrinks toward 12% as the island shrinks
+// toward MIN_ISLAND_SIZE — less room to place them, so they should show up less.
+const AREA_SHARE_MAX = 0.30;
+const AREA_SHARE_MIN = 0.12;
+// max times a single area card id may appear among all players' dealt choices in one round
+const AREA_CARD_ROUND_CAP = 2;
 const areaCardCount = CARD_IDS.filter(id => AREA_CARDS.has(id)).length;
 const selfCardCount = CARD_IDS.length - areaCardCount;
-const cardWeight = id => (AREA_CARDS.has(id)
-  ? (1 - SELF_CARD_SHARE) / areaCardCount
-  : SELF_CARD_SHARE / selfCardCount);
+const cardWeight = (id, areaShare) => (AREA_CARDS.has(id)
+  ? areaShare / areaCardCount
+  : (1 - areaShare) / selfCardCount);
+// rule-of-three interpolation: islandSize going from initialSize down to MIN_ISLAND_SIZE
+// maps linearly onto areaShare going from AREA_SHARE_MAX down to AREA_SHARE_MIN.
+function areaShareFor(initialSize, currentSize) {
+  if (initialSize <= MIN_ISLAND_SIZE) return AREA_SHARE_MIN;
+  const frac = Math.min(1, Math.max(0, (initialSize - currentSize) / (initialSize - MIN_ISLAND_SIZE)));
+  return AREA_SHARE_MAX - frac * (AREA_SHARE_MAX - AREA_SHARE_MIN);
+}
 // deal 3 distinct cards, weighted so area cards show up less. `excludeArea` is used for a
 // นักสะสม holder already sitting on a banked area card, to guarantee only one is ever active.
-function dealChoices(excludeArea) {
-  const pool = excludeArea ? CARD_IDS.filter(id => !AREA_CARDS.has(id)) : CARD_IDS.slice();
+// `areaCounts` is a plain object shared across every player's deal this round, used to cap
+// any single area card id to AREA_CARD_ROUND_CAP appearances across the whole round.
+function dealChoices(excludeArea, areaShare, areaCounts) {
+  const pool = (excludeArea ? CARD_IDS.filter(id => !AREA_CARDS.has(id)) : CARD_IDS.slice())
+    .filter(id => !AREA_CARDS.has(id) || (areaCounts[id] || 0) < AREA_CARD_ROUND_CAP);
   const out = [];
   for (let i = 0; i < 3 && pool.length; i++) {
-    let total = pool.reduce((s, id) => s + cardWeight(id), 0);
+    let total = pool.reduce((s, id) => s + cardWeight(id, areaShare), 0);
     let r = Math.random() * total, idx = 0;
-    for (; idx < pool.length - 1; idx++) { r -= cardWeight(pool[idx]); if (r <= 0) break; }
-    out.push(pool.splice(idx, 1)[0]);
+    for (; idx < pool.length - 1; idx++) { r -= cardWeight(pool[idx], areaShare); if (r <= 0) break; }
+    const picked = pool.splice(idx, 1)[0];
+    out.push(picked);
+    if (AREA_CARDS.has(picked)) areaCounts[picked] = (areaCounts[picked] || 0) + 1;
   }
   return out;
 }
@@ -362,6 +377,7 @@ class Room {
       if (p.isBot) p.power = p.powerChoices[Math.floor(Math.random() * p.powerChoices.length)];
     }
     this.islandSize = computeIslandSize(this.players.size);
+    this.initialIslandSize = this.islandSize;
     this.startPowerPick();
   }
 
@@ -416,6 +432,8 @@ class Room {
     this.state = 'cardpick';
     const half = this.islandSize / 2 - 0.6;
     const aliveList = [...this.players.values()].filter(p => p.alive);
+    const areaShare = areaShareFor(this.initialIslandSize, this.islandSize);
+    const areaCounts = {};
     for (const p of aliveList) {
       p.ready = false;
       p.shotTargetId = null;
@@ -430,7 +448,7 @@ class Room {
       const excludeArea = this.islandSize <= TINY_ISLAND_SIZE ||
         (p.power === 'collector' && p.bankedCard && AREA_CARDS.has(p.bankedCard));
       if (!excludeArea) { p.cardArea = null; p.cardAngle = null; p.wallRot = 0; }
-      p.cardChoices = dealChoices(excludeArea);
+      p.cardChoices = dealChoices(excludeArea, areaShare, areaCounts);
       // bots choose one of their 3 immediately
       if (p.isBot) p.card = p.cardChoices[Math.floor(Math.random() * p.cardChoices.length)];
     }
