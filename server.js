@@ -32,7 +32,7 @@ const AREA_CARDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage',
 // area-card share starts at 30% (full-size map) and shrinks toward 12% as the island shrinks
 // toward MIN_ISLAND_SIZE — less room to place them, so they should show up less.
 const AREA_SHARE_MAX = 0.30;
-const AREA_SHARE_MIN = 0.12;
+const AREA_SHARE_MIN = 0.07;
 // max times a single area card id may appear among all players' dealt choices in one round
 const AREA_CARD_ROUND_CAP = 2;
 const areaCardCount = CARD_IDS.filter(id => AREA_CARDS.has(id)).length;
