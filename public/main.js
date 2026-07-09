@@ -154,6 +154,7 @@ let myCard = null;      // the card I was dealt this round
 // mirrors server.js timing constants for the sequential fire animation
 const SHOT_START_DELAY = 4200;
 const SHOT_INTERVAL = 1300;
+const SHOOTER_ARROW_LEAD_MS = 750; // how long the shooter arrow shows before that shot fires
 const POWER_PAUSE = 1900; // extra gap after a shot that triggers a power/mirror zoom
 const SCAPEGOAT_PAUSE = 2600; // reveal freeze while the ตัวตายตัวแทน swap UI + warp plays (mirrors server)
 const BULLET_SPEED = 8.4; // units/sec — dropped 30% from 12 for a slower, more readable bullet
@@ -1467,7 +1468,7 @@ function spawnLightningBolt(x, z, topY) {
   }
   const parts = []; // { mesh, showAt } — showAt is the fraction of growth progress it appears at
   for (let i = 0; i < pts.length - 1; i++) {
-    parts.push({ mesh: makeBoltSegment(pts[i], pts[i + 1], 0.11), showAt: i / (pts.length - 1) });
+    parts.push({ mesh: makeBoltSegment(pts[i], pts[i + 1], 0.022), showAt: i / (pts.length - 1) });
   }
   // 2-3 short branching forks peeling off the main bolt partway down
   const branchCount = 2 + Math.floor(Math.random() * 2);
@@ -1477,7 +1478,7 @@ function spawnLightningBolt(x, z, topY) {
     const ang = Math.random() * Math.PI * 2;
     const dist = 0.6 + Math.random() * 0.8;
     const end = new THREE.Vector3(start.x + Math.cos(ang) * dist, start.y - (0.35 + Math.random() * 0.5), start.z + Math.sin(ang) * dist);
-    parts.push({ mesh: makeBoltSegment(start, end, 0.055), showAt: idx / (pts.length - 1) });
+    parts.push({ mesh: makeBoltSegment(start, end, 0.011), showAt: idx / (pts.length - 1) });
   }
   fxBolts.push({ parts, life: 0, growDuration: LIGHTNING_FALL_MS / 1000, holdDuration: 0.15, fadeDuration: 0.35 });
 }
@@ -1502,7 +1503,7 @@ function spawnShooterArrow(entry) {
   cone.rotation.x = Math.PI; // point downward
   const baseY = 2.3 * entry.size + 0.5;
   scene.add(cone);
-  fxArrows.push({ mesh: cone, entry, life: 0, duration: 1.0, baseY });
+  fxArrows.push({ mesh: cone, entry, life: 0, duration: SHOOTER_ARROW_LEAD_MS / 1000, baseY });
 }
 
 // พลุไฟ blast: big fiery burst + kill everyone in the 3x3 block
@@ -2825,6 +2826,13 @@ function updateReveal(dt) {
   if (camera.position.distanceTo(camTarget) < CAMERA_SETTLE_EPS) revealClock += dt * 1000;
 
   revealShots.forEach(s => {
+    // mark whose turn is coming up a beat before they actually fire
+    if (!s.arrowShown && !s.triggered && s.type !== 'skip' && !s.skipped &&
+      revealClock >= s.fireTime - SHOOTER_ARROW_LEAD_MS && fxBullets.length === 0) {
+      s.arrowShown = true;
+      const shooterEntry = revealMeshMap.get(s.shooterId);
+      if (shooterEntry) spawnShooterArrow(shooterEntry);
+    }
     // don't let the next shot start while an earlier one's bullets are still travelling
     if (s.triggered || revealClock < s.fireTime || fxBullets.length > 0) return;
     s.triggered = true;
@@ -3023,7 +3031,7 @@ function triggerShot(s) {
   const shooterEntry = revealMeshMap.get(s.shooterId);
   if (!shooterEntry) return;
 
-  spawnShooterArrow(shooterEntry); // mark whose turn this is
+  if (!s.arrowShown) spawnShooterArrow(shooterEntry); // fallback if the lead-in arrow never got a chance to show
 
   handlePowerEvents(s);
 
