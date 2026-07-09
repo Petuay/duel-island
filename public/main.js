@@ -1261,7 +1261,8 @@ function getBloodTexture() {
   return bloodTextureCache;
 }
 
-let fxSprites = [], fxBeams = [], fxParticles = [], revealDecals = [], fxBullets = [], fxLabels = [], fxBarriers = [];
+let fxSprites = [], fxBeams = [], fxParticles = [], revealDecals = [], fxBullets = [], fxLabels = [], fxBarriers = [],
+  fxBolts = [], fxArrows = [];
 
 // hidden-power icons + a short label that floats up above a player when a power fires
 const POWER_EMOJI = { matrix: '🕶️', drunken: '🥴', revenger: '👻', man: '💪', clairvoyant: '👁️', collector: '🎒',
@@ -1274,7 +1275,7 @@ const POWER_DESC = {
   clairvoyant: 'เนตรทิพย์ — ตอนเตรียมตัว เห็นรอยเท้าคู่ต่อสู้สุ่ม 1 คน (มีรอยเท้าหลอกอีก 2 รอย)',
   collector: 'นักสะสม — เก็บการ์ดที่เลือกไว้ใช้ตาถัดไปได้ 1 ใบ',
   chainshare: 'แชร์ลูกโซ่ — ถ้ากระสุนฆ่าคนได้ ยิงลูกซองแฉกออกจากศพคนนั้นต่อ',
-  gambler: 'นักพนัน — 30% คนที่โดนยิงจะไม่ได้ใช้เอฟเฟคป้องกัน (ทั้งการ์ดและพลัง)',
+  gambler: 'นักพนัน — 50% คนที่โดนยิงจะไม่ได้ใช้เอฟเฟคป้องกัน (ทั้งการ์ดและพลัง)',
   standalone: 'ยืนหนึ่ง — ไม่รับผลจากเอฟเฟคพื้นที่ใด ๆ ตายจากกระสุนยิงเท่านั้น'
 };
 // card ids and short blurbs for the in-game reference sheet
@@ -1436,34 +1437,72 @@ function spawnSegmentBullet(color, segments, radius) {
   });
 }
 
-// a jagged bolt falling from high overhead down to the strike point
+// build one glowing cylinder segment between two points (real thickness, unlike a thin Line)
+function makeBoltSegment(a, b, radius) {
+  const len = Math.max(0.01, a.distanceTo(b));
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, 6),
+    new THREE.MeshBasicMaterial({
+      color: 0xeaf6ff, transparent: true, opacity: 0.95,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+  mesh.position.copy(a.clone().add(b).multiplyScalar(0.5));
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+  mesh.visible = false;
+  scene.add(mesh);
+  return mesh;
+}
+
+const LIGHTNING_FALL_MS = 650; // how long the bolt takes to strike down from the sky
+
+// a thick jagged bolt that grows downward from high overhead to the strike point, with a
+// few short branching forks peeling off partway down, then holds briefly and fades
 function spawnLightningBolt(x, z, topY) {
-  const segs = 7;
+  const segs = 9;
   const pts = [];
   for (let i = 0; i <= segs; i++) {
     const t = i / segs;
     const y = topY * (1 - t);
-    const jitter = (i === 0 || i === segs) ? 0 : (Math.random() - 0.5) * 0.7;
+    const jitter = (i === 0 || i === segs) ? 0 : (Math.random() - 0.5) * 0.9;
     pts.push(new THREE.Vector3(x + jitter, y, z + jitter));
   }
-  const mat = new THREE.LineBasicMaterial({
-    color: 0xeaf6ff, transparent: true, opacity: 0.95,
-    blending: THREE.AdditiveBlending, depthWrite: false
-  });
-  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
-  scene.add(line);
-  fxBeams.push({ mesh: line, life: 0, duration: 0.3 });
+  const parts = []; // { mesh, showAt } — showAt is the fraction of growth progress it appears at
+  for (let i = 0; i < pts.length - 1; i++) {
+    parts.push({ mesh: makeBoltSegment(pts[i], pts[i + 1], 0.11), showAt: i / (pts.length - 1) });
+  }
+  // 2-3 short branching forks peeling off the main bolt partway down
+  const branchCount = 2 + Math.floor(Math.random() * 2);
+  for (let b = 0; b < branchCount; b++) {
+    const idx = 2 + Math.floor(Math.random() * (pts.length - 4));
+    const start = pts[idx];
+    const ang = Math.random() * Math.PI * 2;
+    const dist = 0.6 + Math.random() * 0.8;
+    const end = new THREE.Vector3(start.x + Math.cos(ang) * dist, start.y - (0.35 + Math.random() * 0.5), start.z + Math.sin(ang) * dist);
+    parts.push({ mesh: makeBoltSegment(start, end, 0.055), showAt: idx / (pts.length - 1) });
+  }
+  fxBolts.push({ parts, life: 0, growDuration: LIGHTNING_FALL_MS / 1000, holdDuration: 0.15, fadeDuration: 0.35 });
 }
 
-// ใครปักตะไคร้ VFX: a bolt strikes down from the sky, plus a bright bolt glow at the struck
-// area and sparks across the 2x2 zone
+// ใครปักตะไคร้ VFX: a bolt strikes down from the sky; the ground burst + sparks wait for it
+// to actually land instead of popping instantly
 function spawnLightning(x, z) {
   spawnLightningBolt(x, z, 16);
-  spawnFlash(x, 1.5, z, 2.4, 0xaad4ff, 0.55);
-  for (let i = 0; i < 9; i++) {
-    const a = Math.random() * Math.PI * 2, r = Math.random() * THUNDER_HALF_C;
-    spawnFlash(x + Math.cos(a) * r, 0.4, z + Math.sin(a) * r, 0.6, 0xdff0ff, 0.4);
-  }
+  setTimeout(() => {
+    spawnFlash(x, 1.5, z, 2.4, 0xaad4ff, 0.55);
+    for (let i = 0; i < 9; i++) {
+      const a = Math.random() * Math.PI * 2, r = Math.random() * THUNDER_HALF_C;
+      spawnFlash(x + Math.cos(a) * r, 0.4, z + Math.sin(a) * r, 0.6, 0xdff0ff, 0.4);
+    }
+  }, LIGHTNING_FALL_MS);
+}
+
+// a cone pointing down at whoever's about to shoot, so their turn is unmistakable
+function spawnShooterArrow(entry) {
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.5, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffcf3d, transparent: true, opacity: 0.95, depthTest: false }));
+  cone.rotation.x = Math.PI; // point downward
+  const baseY = 2.3 * entry.size + 0.5;
+  scene.add(cone);
+  fxArrows.push({ mesh: cone, entry, life: 0, duration: 1.0, baseY });
 }
 
 // พลุไฟ blast: big fiery burst + kill everyone in the 3x3 block
@@ -1660,6 +1699,31 @@ function updateFx(dt) {
     b.ring.material.opacity = 0.85 * fade;
     b.dome.material.opacity = 0.3 * fade;
     if (t >= 1) { scene.remove(b.group); fxBarriers.splice(i, 1); }
+  }
+  for (let i = fxBolts.length - 1; i >= 0; i--) {
+    const b = fxBolts[i];
+    b.life += dt;
+    const growT = Math.min(1, b.life / b.growDuration);
+    b.parts.forEach(p => { if (!p.mesh.visible && growT >= p.showAt) p.mesh.visible = true; });
+    const total = b.growDuration + b.holdDuration + b.fadeDuration;
+    if (b.life > b.growDuration + b.holdDuration) {
+      const fadeT = (b.life - b.growDuration - b.holdDuration) / b.fadeDuration;
+      const op = Math.max(0, 0.95 * (1 - fadeT));
+      b.parts.forEach(p => { p.mesh.material.opacity = op; });
+    }
+    if (b.life >= total) {
+      b.parts.forEach(p => scene.remove(p.mesh));
+      fxBolts.splice(i, 1);
+    }
+  }
+  for (let i = fxArrows.length - 1; i >= 0; i--) {
+    const a = fxArrows[i];
+    a.life += dt;
+    const t = a.life / a.duration;
+    const bob = Math.sin(a.life * 8) * 0.12;
+    a.mesh.position.set(a.entry.x, a.baseY + bob, a.entry.z);
+    a.mesh.material.opacity = Math.max(0, 0.95 * (1 - Math.max(0, (t - 0.7) / 0.3)));
+    if (t >= 1) { scene.remove(a.mesh); fxArrows.splice(i, 1); }
   }
   for (let i = fxBullets.length - 1; i >= 0; i--) {
     const b = fxBullets[i];
@@ -1941,14 +2005,16 @@ socket.on('yourPowers', data => {
 
 socket.on('powerPicked', data => { myPower = data.power; updateMyPowerBadge(); });
 
-// persistent top-left badge showing my own latent power for the rest of the match
+// persistent bottom-right badge showing my own latent power + its description for the rest of the match
 function updateMyPowerBadge() {
   const el = $('myPowerBadge');
   if (!el) return;
   if (!myPower) { el.classList.add('hidden'); return; }
   const full = POWER_DESC[myPower] || myPower;
   const name = full.split(' — ')[0];
-  el.innerHTML = `<span class="mpbEmoji">${POWER_EMOJI[myPower] || '⚡'}</span><span>${name}</span>`;
+  const desc = full.replace(/^[^—]*—\s*/, '');
+  el.innerHTML = `<div class="mpbHead"><span class="mpbEmoji">${POWER_EMOJI[myPower] || '⚡'}</span><span>${name}</span></div>
+    <div class="mpbDesc">${desc}</div>`;
   el.classList.remove('hidden');
 }
 
@@ -2208,7 +2274,7 @@ let eyeLastDrop = [null, null, null];
 let eyeTrails = [[], [], []]; // decal meshes per trail, oldest-first, capped at EYE_TRAIL_MAX
 let eyeStepCount = [0, 0, 0]; // for alternating left/right foot offset
 const EYE_DROP_DIST = 0.45;
-const EYE_TRAIL_MAX = 2;
+const EYE_TRAIL_MAX = 1;
 
 function clearEyeTrail() {
   eyeTrails.forEach(trail => trail.forEach(g => scene.remove(g)));
@@ -2377,6 +2443,8 @@ function clearRevealMeshes() {
   fxBullets.forEach(f => { scene.remove(f.mesh); scene.remove(f.glow); }); fxBullets = [];
   fxLabels.forEach(l => scene.remove(l.sp)); fxLabels = [];
   fxBarriers.forEach(b => scene.remove(b.group)); fxBarriers = [];
+  fxBolts.forEach(b => b.parts.forEach(p => scene.remove(p.mesh))); fxBolts = [];
+  fxArrows.forEach(a => scene.remove(a.mesh)); fxArrows = [];
   revealDecals.forEach(d => scene.remove(d)); revealDecals = [];
   clearObstacles();
   clearRodMeshes();
@@ -2955,6 +3023,8 @@ function triggerShot(s) {
   const shooterEntry = revealMeshMap.get(s.shooterId);
   if (!shooterEntry) return;
 
+  spawnShooterArrow(shooterEntry); // mark whose turn this is
+
   handlePowerEvents(s);
 
   if (s.type === 'thunder') {
@@ -2962,7 +3032,7 @@ function triggerShot(s) {
       spawnFlash(shooterEntry.x, 0.7, shooterEntry.z, 0.6, 0xbfe0ff, 0.3); // gun fizzles
     } else {
       spawnLightning(s.x, s.z);
-      (s.hitIds || []).forEach(id => setTimeout(() => killVictim(id), 220));
+      (s.hitIds || []).forEach(id => setTimeout(() => killVictim(id), LIGHTNING_FALL_MS + 60));
     }
     return;
   }

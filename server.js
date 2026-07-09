@@ -992,7 +992,7 @@ class Room {
       const baseAngle = shooter.angle;
       const drunken = shooter.power === 'drunken' && Math.random() < 0.25;
       // นักพนัน: 30% of this shot ignores the victim's protective card/power entirely
-      const bypass = shooter.power === 'gambler' && Math.random() < 0.3;
+      const bypass = shooter.power === 'gambler' && Math.random() < 0.5;
 
       const kills = new Set();
       const ev = newEv();
