@@ -1568,7 +1568,7 @@ function makeObstacleMesh(o, ghost) {
     // a single tree at the obstacle's centre, sunk into the ground so only the canopy shows
     placeGlbProp(treeCardTemplates[0], g, 0, 0, 1.4, o.rot, 0.35);
   } else if (o.type === 'firework') {
-    placeGlbProp(volcanoTemplate, g, 0, 0, 1.3);
+    placeGlbProp(volcanoTemplate, g, 0, 0, 0.65);
   } else if (o.type === 'thunder') {
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 8), new THREE.MeshStandardMaterial({ color: 0x6a7a8a }));
     pole.position.y = 0.45; g.add(pole);

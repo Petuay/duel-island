@@ -90,7 +90,7 @@ function makeObstacle(i, type, x, z, extra = {}) {
     // 1x3 rectangle, free-rotated in 45deg steps by the caster (right-click)
     return { i, type, x, z, rot: extra.rot || 0, halfLen: 1.5, halfWid: 0.5 };
   }
-  const h = 0.5; // firework: 1x1 trigger box (the 3x3 kill radius is applied separately on trigger)
+  const h = 0.25; // firework: model+trigger box halved (0.5) to make it harder to hit; 3x3 kill radius on trigger is unchanged
   return { i, type, x, z, minX: x - h, maxX: x + h, minZ: z - h, maxZ: z + h };
 }
 // entry distance where ray (ox,oz)+t(dx,dz) enters an AABB, or null if it misses
@@ -881,12 +881,13 @@ class Room {
             touched.add(victim.id);
             break;
           }
-          // Mirror card: thorn armour bounces the shot straight back at the shooter (card beats power)
+          // Mirror card: thorn armour bounces the shot back the way it came (reverses the incoming
+          // heading) rather than homing in on wherever the shooter currently stands
           if (!bypass && fx.get(r.hitId).mirror) {
             seg.mirror = victim.id;
             ev.mirror.push(victim.id);
             touched.add(victim.id);
-            ang = Math.atan2(shooter.x - r.x, shooter.z - r.z);
+            ang = ang + Math.PI;
             ox = r.x; oz = r.z; selfId = victim.id;
             continue;
           }
