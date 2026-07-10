@@ -983,7 +983,7 @@ class Room {
         const a = shooter.cardArea || { x: shooter.x, z: shooter.z };
         const victims = [];
         for (const t of alive) {
-          if (!stillAlive.has(t.id)) continue;
+          if (!stillAlive.has(t.id) || t.id === shooter.id) continue; // never strikes its own caster
           if (Math.abs(t.x - a.x) <= THUNDER_STRIKE_HALF && Math.abs(t.z - a.z) <= THUNDER_STRIKE_HALF) victims.push(t.id);
         }
         victims.forEach(id => stillAlive.delete(id));
