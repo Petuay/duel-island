@@ -43,7 +43,12 @@ let selfChar = 'buddha';
 // The .glb is already a complete square frame — just scale the whole thing to
 // fit the arena and drop it in, no tiling/repeating needed.
 let borderTemplate = null;
-const BORDER_MODEL_SIZE = 1.88; // native footprint (X/Z) in world units, from the source .glb
+// the frame has real wall thickness, so its INNER (playable-facing) face sits inside its outer
+// footprint — measured directly from the raw model: outer half-extent ~0.949, inner half-extent
+// ~0.840 (trimesh vertex scan). We scale so the INNER face lands exactly on the field edge
+// (fieldHalf = size/2, the same boundary bullets bounce off of server-side), not the outer edge —
+// otherwise bounced bullets visually clip into the wall before reflecting.
+const BORDER_INNER_HALF = 0.8401;
 (() => {
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   loader.load('models/border.glb',
@@ -55,16 +60,16 @@ function addBorderFrame(group, size) {
   if (!borderTemplate) return;
   const frame = skeletonClone(borderTemplate);
   frame.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-  const scale = size / BORDER_MODEL_SIZE;
+  const scale = (size / 2) / BORDER_INNER_HALF;
   frame.scale.setScalar(scale);
   frame.position.set(0, 0, 0);
   group.add(frame);
 }
 
-// ---------- 3D corner decorations (individual crystal shards) ----------
-// The source asset was a fused cluster of 4 separate crystal shards baked into
-// one mesh; it was split offline into standalone crystal0-3.glb so each can be
-// placed on its own (tree props were tried and removed — model wasn't liked).
+// ---------- Crystal model (now used as the แท่นมหาสเน่ห์ rod prop, not corner decor) ----------
+// The source asset was a fused cluster of 4 separate crystal shards baked into one mesh; it was
+// split offline into standalone crystal0-3.glb. Was placed at all 4 map corners as pure decor —
+// removed per user request and reused instead as the rod card's placed-prop model.
 const CRYSTAL_COUNT = 4;
 const crystalTemplates = [];
 const CRYSTAL_MODEL_HEIGHT = 1.0;
@@ -72,7 +77,7 @@ const CRYSTAL_MODEL_HEIGHT = 1.0;
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   for (let i = 0; i < CRYSTAL_COUNT; i++) {
     loader.load(`models/crystal${i}.glb`,
-      gltf => { crystalTemplates[i] = gltf.scene; addCornerDecor(currentIslandSize); },
+      gltf => { crystalTemplates[i] = gltf.scene; },
       undefined,
       err => console.warn('[crystal] load failed:', i, err));
   }
@@ -89,27 +94,6 @@ function placeGlbProp(template, group, x, z, targetHeight, rotY = 0, sinkY = 0) 
   model.position.set(x - center.x * s, -box.min.y * s - sinkY, z - center.z * s);
   model.rotation.y = rotY;
   group.add(model);
-}
-// a dedicated group so re-running addCornerDecor (island resize, or a prop template
-// arriving late) clears and rebuilds instead of piling up duplicate instances
-const cornerDecorGroup = new THREE.Group();
-// one crystal shard per corner, inset from the border frame.
-// each split piece keeps the native lean of its source quadrant (crystal0 = -x/-z,
-// crystal1 = -x/+z, crystal2 = +x/-z, crystal3 = +x/+z) — pairing it with the
-// matching corner sign (and no extra rotation) keeps all 4 corners a consistent
-// mirror image of each other instead of a mismatched/rotated look on some sides.
-function addCornerDecor(size) {
-  while (cornerDecorGroup.children.length) cornerDecorGroup.remove(cornerDecorGroup.children[0]);
-  const half = size / 2;
-  const corners = [
-    { sx: -1, sz: -1, idx: 0 },
-    { sx: -1, sz: 1, idx: 1 },
-    { sx: 1, sz: -1, idx: 2 },
-    { sx: 1, sz: 1, idx: 3 }
-  ];
-  corners.forEach(({ sx, sz, idx }) => {
-    placeGlbProp(crystalTemplates[idx], cornerDecorGroup, sx * half * 0.6, sz * half * 0.6, CRYSTAL_MODEL_HEIGHT, 0);
-  });
 }
 
 function clipByName(tpl, name) {
@@ -139,7 +123,7 @@ const CARDS = [
   { id: 'scapegoat', emoji: '🔀', name: 'ตัวตายตัวแทน', desc: 'ถ้ารอบนี้กำลังจะโดนยิง สุ่มสลับตำแหน่งกับผู้เล่นคนอื่น (สลับกับคนยิงหรือกับตัวเองก็ได้!)' },
   { id: 'static', emoji: '🔌', name: 'ไฟฟ้าสถิต', desc: 'ไม่ยิงปืน แต่ปล่อยไฟช็อตระเบิดรอบตัวเอง 3×3 ฆ่าทุกคนที่ยืนใกล้' },
   { id: 'kneebrace', emoji: '🦵', name: 'ไม้พยุงเข่า', desc: 'ถ้าโดนยิงรอบนี้จะไม่ตาย แต่ตาถัดไปจะขยับตำแหน่งไม่ได้' },
-  { id: 'lightningrod', emoji: '🗼', name: 'สายล่อฟ้า', desc: 'พื้นที่: วางเสาล่อฟ้า 1 จุด กระสุนที่พุ่งเข้าใกล้ในระยะ 4×4 จะถูกเบี่ยงวิถีโค้งเข้าหาเสา ยิ่งใกล้ยิ่งเบี่ยงแรง' }
+  { id: 'lightningrod', emoji: '🗼', name: 'แท่นมหาสเน่ห์', desc: 'พื้นที่: วางแท่นมหาสเน่ห์ 1 จุด กระสุนที่พุ่งเข้าใกล้ในระยะ 4×4 จะถูกเบี่ยงวิถีโค้งเข้าหาแท่น ยิ่งใกล้ยิ่งเบี่ยงแรง' }
 ];
 const cardById = id => CARDS.find(c => c.id === id) || null;
 const AREA_CARD_IDS = new Set(['wall', 'cyclone', 'firework', 'thunder', 'icecage', 'lightningrod']);
@@ -926,8 +910,6 @@ function buildIsland(size) {
   islandGroup.add(base);
 
   addBorderFrame(islandGroup, n);
-  islandGroup.add(cornerDecorGroup);
-  addCornerDecor(n);
 
   scene.add(islandGroup);
   return n;
@@ -1584,13 +1566,8 @@ function makeObstacleMesh(o, ghost) {
       new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true, opacity: ghost ? 0.18 : 0.28, depthWrite: false }));
     tint.rotation.x = -Math.PI / 2; tint.position.y = 0.02; g.add(tint);
   } else if (o.type === 'lightningrod') {
-    // just a tall glowing pole — the pull zone itself isn't shown
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 1.6, 8),
-      new THREE.MeshStandardMaterial({ color: 0x8a95a8, metalness: 0.6, roughness: 0.4 }));
-    pole.position.y = 0.8; g.add(pole);
-    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 12),
-      new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0xffe066, emissiveIntensity: 1.1 }));
-    orb.position.y = 1.65; g.add(orb);
+    // แท่นมหาสเน่ห์: reuses the crystal shard model (previously just corner decor)
+    placeGlbProp(crystalTemplates[0], g, 0, 0, CRYSTAL_MODEL_HEIGHT);
   }
   if (ghost) applyGhostTint(g, 0.5);
   g.position.set(o.x, 0, o.z);
@@ -2518,7 +2495,7 @@ const CARD_INSTRUCTIONS = {
   thunder: '⚡ คลิกซ้ายเพื่อเลือกจุดที่จะให้ฟ้าผ่าลง',
   firework: '🌋 คลิกซ้ายเพื่อวางภูเขาไฟบนสนาม',
   icecage: '❄️ คลิกซ้ายเพื่อวางโซนแช่แข็ง 3×3',
-  lightningrod: '🗼 คลิกซ้ายเพื่อวางเสาล่อฟ้า กระสุนที่พุ่งเข้าใกล้จะโค้งเข้าหาเสา'
+  lightningrod: '🗼 คลิกซ้ายเพื่อวางแท่นมหาสเน่ห์ กระสุนที่พุ่งเข้าใกล้จะโค้งเข้าหาแท่น'
 };
 function showCardInstructionBanner() {
   clearTimeout(cardInstructionTimer);
