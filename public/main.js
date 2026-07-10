@@ -60,8 +60,10 @@ function addBorderFrame(group, size) {
   if (!borderTemplate) return;
   const frame = skeletonClone(borderTemplate);
   frame.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-  const scale = ((size / 2) / BORDER_INNER_HALF) * 0.7;
-  frame.scale.setScalar(scale);
+  // footprint (X/Z) stays pinned to the field edge as before; only the wall's height (Y) is
+  // shrunk 30% per user request — the inner face must stay exactly where bullets bounce.
+  const scale = (size / 2) / BORDER_INNER_HALF;
+  frame.scale.set(scale, scale * 0.7, scale);
   frame.position.set(0, 0, 0);
   group.add(frame);
 }
