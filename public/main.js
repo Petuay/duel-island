@@ -539,16 +539,25 @@ try {
   composer.setSize(window.innerWidth, window.innerHeight);
 } catch (e) { console.warn('[postfx] disabled', e); composer = null; }
 
-// ---------- Painted textures (user-generated art in public/textures/) ----------
-const TEX_LOADER = new THREE.TextureLoader();
-function loadTex(name) {
-  const t = TEX_LOADER.load('textures/' + name);
-  if ('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+// ---------- Procedural grid floor texture: flat green with 1x1-block gridlines ----------
+let gridTextureCache = null;
+function getGridTexture() {
+  if (gridTextureCache) return gridTextureCache;
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#3fae4a';
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(1.5, 1.5, size - 3, size - 3);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  if ('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+  gridTextureCache = tex;
+  return tex;
 }
-const PAINTED = {
-  floor: { tex: loadTex('floor.webp') }
-};
 
 // Black background, matching the original scenery (the ink-cloud ring itself stays removed).
 scene.background = new THREE.Color(0x000000);
@@ -913,8 +922,10 @@ function buildIsland(size) {
   const half = n / 2;
   const rng = mulberry32(1000 + n * 37); // stable map per island size; no flickering rebuilds
 
-  // Square playable field wearing the painted ground texture.
-  const groundMat = new THREE.MeshStandardMaterial({ map: PAINTED.floor.tex, roughness: 1, metalness: 0 });
+  // Square playable field: flat green grid, one gridline per 1x1 block, so skill ranges read at a glance.
+  const gridTex = getGridTexture();
+  gridTex.repeat.set(n, n);
+  const groundMat = new THREE.MeshStandardMaterial({ map: gridTex, roughness: 1, metalness: 0 });
   const sideMat = MAP_MATS.cliff;
   const base = new THREE.Mesh(
     new THREE.BoxGeometry(n, 0.64, n),
